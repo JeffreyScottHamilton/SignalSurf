@@ -16,6 +16,8 @@ class FakeAudio {
 
   volume = 1;
   muted = false;
+  readyState = 0;
+  paused = false;
   preload = '';
   error: { code: number } | null = null;
   readonly log: string[] = [];
@@ -365,29 +367,78 @@ describe('player controller', () => {
     expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
   });
 
-  it('gives a long-running stream one retry per drop: a playing event resets the budget', async () => {
+  it('drops after 5s of playing twice: the second drop goes to error', async () => {
     player.play(station('a'));
     el().emit('playing');
+    await vi.advanceTimersByTimeAsync(5_000);
+    el().emit('ended');
+    expect(status()).toBe('loading');
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(5_000);
+    el().emit('ended');
+    expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(2);
+  });
+
+  it('drop after 31s of continuous playing gets a fresh retry', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(5_000);
     el().emit('ended');
     await vi.advanceTimersByTimeAsync(1_500);
     el().emit('playing');
+    await vi.advanceTimersByTimeAsync(31_000);
     el().emit('ended');
     expect(status()).toBe('loading');
     await vi.advanceTimersByTimeAsync(1_500);
     expect(el().log.filter((l) => l === 'play')).toHaveLength(3);
     expect(status()).toBe('loading');
+    el().emit('playing');
+    expect(status()).toBe('playing');
   });
 
-  it('gives a fresh network retry after a successful playing event', async () => {
+  it('a network error after 5s of playing gets no fresh retry', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(5_000);
+    el().error = { code: 2 };
+    el().emit('error');
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(5_000);
+    el().emit('error');
+    expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
+  });
+
+  it('gives a fresh network retry after 30s of continuous playing', async () => {
     player.play(station('a'));
     el().error = { code: 2 };
     el().emit('error');
     await vi.advanceTimersByTimeAsync(1_500);
     el().emit('playing');
+    await vi.advanceTimersByTimeAsync(30_000);
     el().emit('error');
     expect(status()).toBe('loading');
     await vi.advanceTimersByTimeAsync(1_500);
     expect(el().log.filter((l) => l === 'play')).toHaveLength(3);
+  });
+
+  it('a buffering stall before 30s of playing does not earn back the budget', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(20_000);
+    el().emit('waiting');
+    await vi.advanceTimersByTimeAsync(2_000);
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(20_000);
+    el().emit('ended');
+    expect(player.getState()).toMatchObject({ status: 'loading' });
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().emit('playing');
+    el().emit('ended');
+    expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
   });
 
   it('shows buffering while stalled and returns to playing when data resumes', async () => {
@@ -419,13 +470,26 @@ describe('player controller', () => {
     expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
   });
 
-  it('gives a stall a fresh retry when the stream plays again before stalling', async () => {
+  it('ignores a stalled event while the element still has enough data to keep playing', async () => {
     player.play(station('a'));
     el().emit('playing');
+    el().readyState = 4;
+    el().emit('stalled');
+    expect(status()).toBe('playing');
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(status()).toBe('playing');
+    expect(player.getState().error).toBeNull();
+  });
+
+  it('gives a stall a fresh retry when the stream plays for 30s before stalling', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(30_000);
     el().emit('waiting');
     await vi.advanceTimersByTimeAsync(15_000);
     await vi.advanceTimersByTimeAsync(1_500);
     el().emit('playing');
+    await vi.advanceTimersByTimeAsync(30_000);
     el().emit('waiting');
     await vi.advanceTimersByTimeAsync(15_000);
     expect(status()).toBe('loading');

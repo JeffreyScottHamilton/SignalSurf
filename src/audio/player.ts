@@ -10,8 +10,11 @@ import type { PlayerState, Station } from '@/types';
 const LOAD_TIMEOUT_MS = 15_000;
 const STALL_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 1_500;
+/** Continuous playing for this long earns back the automatic retry budget. */
+const HEALTHY_MS = 30_000;
 const HLS_MIME = 'application/vnd.apple.mpegurl';
 const MEDIA_ERR_DECODE = 3;
+const HAVE_FUTURE_DATA = 3;
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
 const MESSAGES = {
@@ -49,6 +52,7 @@ let startedToken = 0;
 let loadTimer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let stallTimer: ReturnType<typeof setTimeout> | null = null;
+let healthyTimer: ReturnType<typeof setTimeout> | null = null;
 let listeners: [string, EventListener][] = [];
 let hlsInstance: { destroy(): void } | null = null;
 const startedListeners = new Set<(s: Station) => void>();
@@ -74,9 +78,16 @@ function clearTimers(): void {
   if (loadTimer !== null) clearTimeout(loadTimer);
   if (retryTimer !== null) clearTimeout(retryTimer);
   if (stallTimer !== null) clearTimeout(stallTimer);
+  if (healthyTimer !== null) clearTimeout(healthyTimer);
   loadTimer = null;
   retryTimer = null;
   stallTimer = null;
+  healthyTimer = null;
+}
+
+function cancelHealthy(): void {
+  if (healthyTimer !== null) clearTimeout(healthyTimer);
+  healthyTimer = null;
 }
 
 function detachListeners(): void {
@@ -215,6 +226,9 @@ function attachListeners(el: HTMLAudioElement, t: number): void {
   // Starts a 15s clock when playback stops for buffering. If it never recovers, the normal failure path runs.
   const onBuffering = () => {
     if (store.get().status !== 'playing') return;
+    // `stalled` also fires while the element still holds enough data and keeps playing. Only an underrun is buffering.
+    if (el.readyState >= HAVE_FUTURE_DATA && !el.paused) return;
+    cancelHealthy();
     setState({ status: 'buffering' });
     if (stallTimer !== null) return;
     stallTimer = setTimeout(() => {
@@ -229,9 +243,15 @@ function attachListeners(el: HTMLAudioElement, t: number): void {
     loadTimer = null;
     if (stallTimer !== null) clearTimeout(stallTimer);
     stallTimer = null;
-    // A stream that plays again has earned a fresh retry budget for its next drop.
-    autoRetryUsed = false;
-    reconnectUsed = false;
+    // The retry budget is earned back only after 30s of continuous playing, so a stream
+    // that connects and drops at once cannot retry forever.
+    cancelHealthy();
+    healthyTimer = setTimeout(() => {
+      healthyTimer = null;
+      if (t !== token) return;
+      autoRetryUsed = false;
+      reconnectUsed = false;
+    }, HEALTHY_MS);
     setState({ status: 'playing', error: null });
     if (startedToken !== token) {
       startedToken = token;

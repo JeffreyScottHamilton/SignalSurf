@@ -139,8 +139,12 @@ export function SettingsDialog() {
                   Map data:{' '}
                   <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">
                     Natural Earth
-                  </a>{' '}
-                  (public domain)
+                  </a>
+                </p>
+                <p>
+                  <a href="THIRD-PARTY-NOTICES.txt" target="_blank" rel="noopener noreferrer">
+                    Open-source licences
+                  </a>
                 </p>
               </div>
             </details>

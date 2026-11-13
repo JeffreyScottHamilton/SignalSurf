@@ -4,8 +4,12 @@ Research date: 2026-11-13. Every claim below was checked with the command or URL
 
 ## Key findings
 
-1. **Licence:** not verified. The docs page says the service "can be used freely but without guarantee to work". The GitLab LICENSE file could not be read (GitLab answers 302 from this sandbox), and `radio-browser.info` returned no connection (`curl` exit 000). Treat the data as community data used under the operator's stated terms until the licence is confirmed.
-2. **Attribution:** not stated by the docs page. Attributing "Radio Browser" is a courtesy we recommend, not a requirement we verified.
+1. **Licence (verified 2026-11-13):** the station data is public domain.
+   - `https://www.radio-browser.info/` (home page): "Data license: public domain, software license: GPL, server software: open source" and "Everyone is free to use the collected data (station names, tags, links to stream, links to homepages, language, country, state) in their works. I give all the rights I have at the accumulated data to the public domain."
+   - `https://gitlab.com/radiobrowser/radio-database/-/raw/main/README.md` (database repository, `## License`): "All of the content of this repository is in the public domain."
+   - `https://de1.api.radio-browser.info/` (API docs): "This webservice can be used freely but without guarantee to work."
+   - The API server code is AGPL-3.0 (`https://gitlab.com/radiobrowser/radiobrowser-api-rust/-/raw/master/LICENSE`). That licence covers the server software, not the data, and SignalSurf does not bundle the server.
+2. **Attribution (verified 2026-11-13):** no page fetched requires credit. The API docs ask for a descriptive `User-Agent` and give the reason: "This also helps me to know which apps are using this service, so I can keep the list of apps up to date". The FAQ (`https://www.radio-browser.info/faq`) asks for nothing similar. SignalSurf still credits Radio Browser in the map attribution and in the About panel. Crediting is good practice, not a legal requirement found in these sources.
 3. **Rate limits:** not documented. No rate-limit headers were returned (`curl -sS -D - ...` showed none). Not verified under load. The app keeps request volume low: one server lookup per session, one map load per session, cached near-queries, and no per-keystroke requests (350 ms debounce).
 4. **Credentials:** none needed. Every request in this document was made without a key or login. The docs mention no key.
 5. **Geo coverage:** only a minority of popular stations have coordinates. Of the top 1000 by clicks (hidebroken, https), 358 have coords (35.8%). With `has_geo_info=true`, the top 1000 are all geo-located, and 10,822 stations in total have coords (hidebroken only, no https filter). One sampled geo record is wrong: "Bangkok Community Radio" has `geo_lat=100.5018` (out of range; the longitude 13.7563 looks swapped in). The normaliser rejects out-of-range values but cannot detect a swap that stays in range.
@@ -69,14 +73,14 @@ Line (c) is the literal `country=japan` from the brief. It returns 0 because of 
 - **Common filters:** `hidebroken=true&is_https=true` on every request.
 - **Search:** empty query gives popular stations. A query runs three parallel requests (`name`, `country` title-cased, `state`), merged, deduped, and sorted by clicks. A category adds a `tag` hint (`music`, `news`, `talk`, `sport`) and a client-side filter. If an empty-query category returns fewer than 20 after filtering, one popular request with limit 500 is added and filtered.
 - **Map:** `has_geo_info=true`, popularity order, limit 1000, cached for the session. A failed load is not cached.
-- **Near:** `geo_lat`, `geo_long`, `geo_distance` in metres, default limit 200. Cache key is the position rounded to 1 degree, plus radius and limit. The request itself uses the exact position.
+- **Near:** `geo_lat`, `geo_long`, `geo_distance` in metres, default limit 200. The centre is snapped to a 0.5 degree grid (`snapToHalfDegree`), and the request uses the snapped position too, so a cache hit always matches the request. Cache key is the snapped position plus radius and limit. The map requests it from zoom 5 with a 600 ms debounce and a radius of at most 600 km.
 - **Click count:** `GET /json/url/{id}` after playback starts. Errors are ignored.
 - **Normalisation:** a record is dropped without a uuid, a name, or an https stream. Coordinates must be finite, within range, and not (0,0). Favicons must be https. Homepages must be http(s). Tags are split, lower-cased, trimmed, de-duplicated, capped at 8 kept tags, and categories are classified from all valid tags.
 - **Dedupe:** first occurrence wins, matched by id, then stream URL, then lower-cased name plus country code. Two different stations with the same name in one country collapse into one. This is the contract's rule; it can hide a real station.
 
 ## Not verified
 
-- Licence and attribution terms (finding 1 and 2).
+- Natural Earth's own terms (`naturalearthdata.com` answers 403 through the sandbox proxy). The map credit relies on the app's About text and the world-atlas README; see `docs/licenses.md`.
 - Rate limits under real load.
 - That a real play increments `clickcount` through `/json/url/{id}`.
 - Server-side behaviour of the `User-Agent` request (the app cannot set it from a browser).
