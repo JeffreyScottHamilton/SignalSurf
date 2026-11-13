@@ -40,10 +40,10 @@
 
 @media (max-width: 767px) {
   .ss-chip {
-    height: 36px;
+    height: 40px;
   }
 
   .ss-chips {
-    height: 36px;
+    height: 40px;
   }
 }

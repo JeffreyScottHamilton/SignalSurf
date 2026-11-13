@@ -31,12 +31,14 @@ function BufferingNote() {
 
 function StatusLine({ status, error }: { status: PlayerStatus; error: string | null }) {
   if (status === 'error') {
+    // Short sentence on screen; the full reason is visually hidden in the live region and in the title.
     return (
       <>
-        <span className="ss-player__error">{error}</span>{' '}
+        <span className="ss-player__error">Couldn't play this station</span>
         <button type="button" className="ss-player__text-btn" onClick={() => player.retry()}>
           Try again
         </button>
+        {error && <span className="ss-sr-only">{error}</span>}
       </>
     );
   }
@@ -72,7 +74,12 @@ function Info({ station, status, error }: { station: Station | null; status: Pla
           <span className="ss-player__name">{station.name}</span>
           {location && <span className="ss-player__location">{location}</span>}
         </button>
-        <span className="ss-player__status" role="status" aria-live="polite">
+        <span
+          className={status === 'error' ? 'ss-player__status ss-player__status--error' : 'ss-player__status'}
+          role="status"
+          aria-live="polite"
+          title={status === 'error' && error ? error : undefined}
+        >
           <StatusLine status={status} error={error} />
         </span>
       </span>
@@ -180,7 +187,7 @@ export function PlayerBar() {
             {muted ? <VolumeMuteIcon size={20} /> : <VolumeIcon size={20} />}
           </IconButton>
           <input
-            className="ss-player__volume"
+            className="ss-range ss-player__volume"
             type="range"
             min={0}
             max={1}

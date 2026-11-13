@@ -43,36 +43,36 @@ afterEach(() => {
 describe('favorites', () => {
   it('toggle adds a station, then removes it on the second toggle', async () => {
     const { favorites } = await loadFavorites();
-    const a = makeStation('a');
+    const a = makeStation('station-a-0001');
 
     favorites.toggle(a);
-    expect(favorites.has('a')).toBe(true);
-    expect(favorites.list().map((s) => s.id)).toEqual(['a']);
+    expect(favorites.has('station-a-0001')).toBe(true);
+    expect(favorites.list().map((s) => s.id)).toEqual(['station-a-0001']);
 
     favorites.toggle(a);
-    expect(favorites.has('a')).toBe(false);
+    expect(favorites.has('station-a-0001')).toBe(false);
     expect(favorites.list()).toEqual([]);
   });
 
   it('lists newest first and removes by id', async () => {
     const { favorites } = await loadFavorites();
-    favorites.toggle(makeStation('a'));
-    favorites.toggle(makeStation('b'));
-    favorites.toggle(makeStation('c'));
-    expect(favorites.list().map((s) => s.id)).toEqual(['c', 'b', 'a']);
+    favorites.toggle(makeStation('station-a-0001'));
+    favorites.toggle(makeStation('station-b-0001'));
+    favorites.toggle(makeStation('station-c-0001'));
+    expect(favorites.list().map((s) => s.id)).toEqual(['station-c-0001', 'station-b-0001', 'station-a-0001']);
 
-    favorites.remove('b');
-    expect(favorites.list().map((s) => s.id)).toEqual(['c', 'a']);
-    expect(JSON.parse(localStorage.getItem(KEY) ?? '[]').map((s: Station) => s.id)).toEqual(['c', 'a']);
+    favorites.remove('station-b-0001');
+    expect(favorites.list().map((s) => s.id)).toEqual(['station-c-0001', 'station-a-0001']);
+    expect(JSON.parse(localStorage.getItem(KEY) ?? '[]').map((s: Station) => s.id)).toEqual(['station-c-0001', 'station-a-0001']);
   });
 
   it('persists across re-hydration of the module', async () => {
     const first = await loadFavorites();
-    first.favorites.toggle(makeStation('a'));
-    first.favorites.toggle(makeStation('b'));
+    first.favorites.toggle(makeStation('station-a-0001'));
+    first.favorites.toggle(makeStation('station-b-0001'));
 
     const second = await loadFavorites();
-    expect(second.favorites.list().map((s) => s.id)).toEqual(['b', 'a']);
+    expect(second.favorites.list().map((s) => s.id)).toEqual(['station-b-0001', 'station-a-0001']);
   });
 
   it('treats corrupt JSON as an empty list', async () => {
@@ -85,17 +85,17 @@ describe('favorites', () => {
     localStorage.setItem(
       KEY,
       JSON.stringify([
-        makeStation('a'),
-        { id: 'x' },
+        makeStation('station-a-0001'),
+        { id: 'station-x-0001' },
         null,
         'nope',
-        { ...makeStation('b'), streamUrl: 42 },
-        makeStation('a'),
-        makeStation('c'),
+        { ...makeStation('station-b-0001'), streamUrl: 42 },
+        makeStation('station-a-0001'),
+        makeStation('station-c-0001'),
       ]),
     );
     const { favorites } = await loadFavorites();
-    expect(favorites.list().map((s) => s.id)).toEqual(['a', 'c']);
+    expect(favorites.list().map((s) => s.id)).toEqual(['station-a-0001', 'station-c-0001']);
   });
 
   it('keeps working in memory when writes fail', async () => {
@@ -104,15 +104,15 @@ describe('favorites', () => {
     });
     const { favorites } = await loadFavorites();
 
-    expect(() => favorites.toggle(makeStation('a'))).not.toThrow();
-    expect(favorites.has('a')).toBe(true);
-    expect(favorites.list().map((s) => s.id)).toEqual(['a']);
+    expect(() => favorites.toggle(makeStation('station-a-0001'))).not.toThrow();
+    expect(favorites.has('station-a-0001')).toBe(true);
+    expect(favorites.list().map((s) => s.id)).toEqual(['station-a-0001']);
   });
 
   it('clear empties the list and persists the empty state', async () => {
     const { favorites } = await loadFavorites();
-    favorites.toggle(makeStation('a'));
-    favorites.toggle(makeStation('b'));
+    favorites.toggle(makeStation('station-a-0001'));
+    favorites.toggle(makeStation('station-b-0001'));
 
     favorites.clear();
     expect(favorites.list()).toEqual([]);
@@ -125,9 +125,9 @@ describe('favorites', () => {
     const { favorites } = await loadFavorites();
     expect(favorites.list()).toEqual([]);
 
-    localStorage.setItem(KEY, JSON.stringify([makeStation('z')]));
+    localStorage.setItem(KEY, JSON.stringify([makeStation('station-z-0001')]));
     window.dispatchEvent(new StorageEvent('storage', { key: KEY }));
 
-    expect(favorites.list().map((s) => s.id)).toEqual(['z']);
+    expect(favorites.list().map((s) => s.id)).toEqual(['station-z-0001']);
   });
 });

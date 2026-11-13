@@ -3,6 +3,8 @@ import { readJSON, writeJSON } from '@/lib/safeStorage';
 import type { Coords, Station, StationCategory } from '@/types';
 
 const CATEGORIES: readonly string[] = ['music', 'news', 'talk', 'sports'];
+const MIN_ID_LENGTH = 8;
+const MIN_NAME_LENGTH = 2;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -39,7 +41,7 @@ function coordsOf(v: unknown): Coords | null {
 
 /**
  * Strict check for a stored station snapshot. Returns a fully typed Station with
- * every field validated, or null when id, name or the https stream is unusable.
+ * every field validated, or null when id (8+ characters), name (2+ characters) or the https stream is unusable.
  * Other bad fields are replaced by their empty value, so nothing unsafe is kept.
  */
 export function sanitizeStation(v: unknown): Station | null {
@@ -47,7 +49,10 @@ export function sanitizeStation(v: unknown): Station | null {
   const id = text(v.id);
   const name = text(v.name);
   const streamUrl = text(v.streamUrl);
-  if (id === null || name === null || streamUrl === null || !isUrlWith(streamUrl, ['https:'])) return null;
+  // Real ids are UUIDs, and no station is named with a single character.
+  if (id === null || id.length < MIN_ID_LENGTH) return null;
+  if (name === null || name.length < MIN_NAME_LENGTH) return null;
+  if (streamUrl === null || !isUrlWith(streamUrl, ['https:'])) return null;
 
   const homepage = text(v.homepage);
   const favicon = text(v.favicon);

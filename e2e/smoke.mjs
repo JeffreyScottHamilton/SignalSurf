@@ -395,11 +395,11 @@ async function main() {
         await page.waitForTimeout(400);
       }
       await page.waitForTimeout(600);
-      // Single markers that are on screen inside the map and not covered by another element.
+      // Single markers that are on screen inside the map and not covered by another element (clusters excluded).
       const visible = await page.evaluate(() => {
         const c = document.querySelector('.ss-map__canvas')?.getBoundingClientRect();
         if (!c) return [];
-        return [...document.querySelectorAll('.leaflet-marker-pane .leaflet-marker-icon[aria-label]')]
+        return [...document.querySelectorAll('.leaflet-marker-pane .leaflet-marker-icon[aria-label]:not(.ss-cluster-icon)')]
           .map((e) => {
             const r = e.getBoundingClientRect();
             const cx = r.left + r.width / 2;
@@ -411,7 +411,7 @@ async function main() {
           .filter((m) => m.inside && m.clear);
       });
       if (visible.length === 0) {
-        const total = await page.locator('.leaflet-marker-pane .leaflet-marker-icon[aria-label]').count();
+        const total = await page.locator('.leaflet-marker-pane .leaflet-marker-icon[aria-label]:not(.ss-cluster-icon)').count();
         return `${count} markers/clusters; no single marker on screen at this zoom (${total} single markers off screen)`;
       }
       const target = visible[0];

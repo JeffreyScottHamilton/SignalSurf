@@ -93,13 +93,13 @@
   cursor: default;
 }
 
-/* Station markers. The outer box is a 16px hit area. */
+/* Station markers. The outer box is a 24px hit area; the dot is centred with transparent padding. */
 .ss-marker {
   display: block;
   box-sizing: border-box;
   width: 8px;
   height: 8px;
-  margin: 4px;
+  margin: 8px;
   border: 1px solid var(--ss-bg);
   border-radius: 50%;
   background: var(--ss-text);
@@ -108,16 +108,17 @@
 .ss-marker--selected {
   width: 14px;
   height: 14px;
-  margin: 1px;
+  margin: 5px;
   border: 2px solid var(--ss-text);
   background: var(--ss-accent);
 }
 
-/* Cluster disc: flat, neutral, with the count. 20px, so dense regions read as a few small badges. */
+/* Cluster disc: flat, neutral, with the count. The visual is 20px inside a 24px hit area. */
 .ss-cluster {
   box-sizing: border-box;
   width: 20px;
   height: 20px;
+  margin: 2px;
   display: grid;
   place-items: center;
   background: var(--ss-elevated);
@@ -218,6 +219,10 @@
   .ss-map__zoom-btn {
     width: 44px;
     height: 44px;
+  }
+
+  .ss-map .ss-map-card__play {
+    height: 40px;
   }
 }
 

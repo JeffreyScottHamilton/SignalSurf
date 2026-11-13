@@ -56,6 +56,58 @@ img {
   outline-offset: 2px;
 }
 
+/* Range slider: dark track with an accent fill (--ss-fill is set inline by the owner). Shared by the player and Settings. */
+.ss-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 32px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  accent-color: var(--ss-accent);
+}
+
+.ss-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--ss-r-full);
+  background: linear-gradient(
+    to right,
+    var(--ss-accent) 0 var(--ss-fill, 0%),
+    var(--ss-border) var(--ss-fill, 0%) 100%
+  );
+}
+
+.ss-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: var(--ss-r-full);
+  background: var(--ss-accent-text);
+}
+
+.ss-range::-moz-range-track {
+  height: 4px;
+  border-radius: var(--ss-r-full);
+  background: var(--ss-border);
+}
+
+.ss-range::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--ss-r-full);
+  background: var(--ss-accent);
+}
+
+.ss-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: var(--ss-r-full);
+  background: var(--ss-accent-text);
+}
+
 .ss-sr-only {
   position: absolute;
   width: 1px;

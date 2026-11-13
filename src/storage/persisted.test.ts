@@ -4,7 +4,7 @@ import { createPersisted, sanitizeStation, storageHealth } from './persisted';
 const FAV_KEY = 'signalsurf:favorites:v1';
 
 function valid(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return { id: 'x', name: 'Station X', streamUrl: 'https://e.com/s', ...overrides };
+  return { id: 'station-x-0001', name: 'Station X', streamUrl: 'https://e.com/s', ...overrides };
 }
 
 beforeEach(() => {
@@ -20,7 +20,7 @@ describe('sanitizeStation', () => {
   it('keeps a valid snapshot and fills defaults for the optional fields', () => {
     const s = sanitizeStation(valid());
     expect(s).toEqual({
-      id: 'x',
+      id: 'station-x-0001',
       name: 'Station X',
       streamUrl: 'https://e.com/s',
       homepage: null,
@@ -50,6 +50,22 @@ describe('sanitizeStation', () => {
     expect(sanitizeStation(valid({ streamUrl: 'http://e.com/s' }))).toBeNull();
     expect(sanitizeStation(valid({ streamUrl: 'javascript:alert(1)' }))).toBeNull();
     expect(sanitizeStation(valid({ streamUrl: 'not a url' }))).toBeNull();
+  });
+
+  it('drops entries whose name is shorter than 2 characters after trimming', () => {
+    expect(sanitizeStation(valid({ name: 'A' }))).toBeNull();
+    expect(sanitizeStation(valid({ name: '  A  ' }))).toBeNull();
+    expect(sanitizeStation(valid({ name: ' AB ' }))?.name).toBe('AB');
+  });
+
+  it('drops entries whose id is shorter than 8 characters, and keeps a UUID-length id', () => {
+    expect(sanitizeStation(valid({ id: 'abc-def' }))).toBeNull();
+    expect(sanitizeStation(valid({ id: '1234567' }))).toBeNull();
+    expect(sanitizeStation(valid({ id: '  abc  ' }))).toBeNull();
+    expect(sanitizeStation(valid({ id: '12345678' }))?.id).toBe('12345678');
+    expect(sanitizeStation(valid({ id: '3f2a9c1e-7b4d-4e8a-9f10-2c5d6e7f8a9b' }))?.id).toBe(
+      '3f2a9c1e-7b4d-4e8a-9f10-2c5d6e7f8a9b',
+    );
   });
 
   it('rejects a non-string region instead of passing it through', () => {
@@ -110,11 +126,15 @@ describe('favorites hydration with corrupt entries', () => {
   it('keeps the valid entry and loads the bad one without crashing', async () => {
     localStorage.setItem(
       FAV_KEY,
-      JSON.stringify([valid({ id: 'bad', region: 5 }), valid({ id: 'good', region: 'Oslo' })]),
+      JSON.stringify([
+        valid({ id: 'bad-00000001', region: 5 }),
+        valid({ id: 'good-00000002', region: 'Oslo' }),
+        valid({ id: 'short', region: 'Oslo' }),
+      ]),
     );
     vi.resetModules();
     const { favorites } = await import('./favorites');
-    expect(favorites.list().map((s) => s.id)).toEqual(['bad', 'good']);
+    expect(favorites.list().map((s) => s.id)).toEqual(['bad-00000001', 'good-00000002']);
     expect(favorites.list()[0]?.region).toBeNull();
     expect(favorites.list()[1]?.region).toBe('Oslo');
   });

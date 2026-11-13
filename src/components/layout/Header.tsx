@@ -15,6 +15,7 @@ export function Header() {
   const view = useStore(uiStore, (s) => s.view);
   return (
     <header className="ss-header">
+      <h1 className="ss-sr-only">SignalSurf — global radio explorer</h1>
       <div className="ss-header__brand">
         <LogoIcon className="ss-header__logo" size={28} />
         <span className="ss-header__wordmark">SignalSurf</span>

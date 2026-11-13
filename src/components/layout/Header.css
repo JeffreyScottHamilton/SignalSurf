@@ -83,12 +83,12 @@
   margin-left: auto;
 }
 
-/* Mobile (<768px): one 88px header: logo row 44px (gear is a 44px target) + tab row 43px, plus the 1px border. */
+/* Mobile (<768px): one 89px header: logo row 44px (gear is a 44px target) + tab row 44px, plus the 1px border. */
 @media (max-width: 767px) {
   .ss-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: 44px 43px;
+    grid-template-rows: 44px 44px;
     align-items: center;
     gap: 0;
     height: auto;

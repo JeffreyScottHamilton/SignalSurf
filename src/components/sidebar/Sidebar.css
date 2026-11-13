@@ -39,32 +39,47 @@
   display: none;
 }
 
-/* Mobile (<768px): bottom sheet. Collapsed = 56px bar (handle + search). */
+/* Mobile (<768px): bottom sheet. Collapsed = 64px bar: a 44px handle beside a 44px search field.
+   Expanded: the handle sits above the search field, full width. */
 @media (max-width: 767px) {
   .ss-sidebar {
     flex: 0 0 auto;
-    height: 56px;
-    gap: 0;
+    flex-direction: row;
+    align-items: center;
+    height: 64px;
+    gap: var(--ss-2);
     padding: 0 var(--ss-2);
     border-radius: var(--ss-r-lg);
   }
 
   .ss-sidebar--expanded {
+    flex-direction: column;
+    align-items: stretch;
     height: 55dvh;
     gap: var(--ss-2);
     padding: 0 var(--ss-2) var(--ss-2);
   }
 
+  .ss-sidebar:not(.ss-sidebar--expanded) .ss-search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* 44px touch target; the visible grab bar inside is still 36x4. */
   .ss-sheet-handle {
     display: flex;
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 14px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border: 0;
     background: transparent;
+  }
+
+  .ss-sidebar--expanded .ss-sheet-handle {
+    width: 100%;
   }
 
   .ss-sheet-handle__bar {

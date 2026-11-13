@@ -4,6 +4,10 @@
 // deliberate abort in the error test. Test-side hooks: an init script remembers every
 // HTMLMediaElement (window.__ssMedia) and the Radio Browser JSON is read from responses only.
 // Runs against `npm run preview` (started and stopped here) unless LIVE_BASE_URL is set.
+//
+// Every target is tried. A target that never reaches Live stays in the table with the observed reason.
+// The switching test uses the first two stations that reached Live. Exit 0 needs at least two
+// stations playing and switching, pause, volume, history and error all passing.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -19,7 +23,8 @@ const OUT = '/tmp/claude-0/-home-user/56aa8976-1187-5e42-9581-774146525f7d/scrat
 const API_HOST = /(^|\.)radio-browser\.info$/;
 const WINDOW_MS = 12_000;
 const SAMPLE_MS = 250;
-const STREAM_HOSTS = ['ice6.somafm.com', 'stream.live.vc.bbcmedia.co.uk', 'liveradio.swr.de', 'stream.radiofrance.fr'];
+const MIN_PLAYING = 2;
+const STREAM_TYPES = ['media', 'audio', 'xhr', 'fetch'];
 
 const TARGETS = [
   { n: 1, query: 'SomaFM Groove Salad', nameRe: /SomaFM Groove Salad/i, host: 'ice6.somafm.com' },
@@ -41,12 +46,20 @@ const fmt = (v) => (v === null || v === undefined ? '-' : typeof v === 'number' 
 /** Read-only snapshot of the player UI and every media element the page created. */
 function pageState() {
   const q = (s) => document.querySelector(s);
+  // The status line's visible text only: the visually hidden copy of the error sentence is dropped.
+  const statusNode = q('footer.ss-player .ss-player__status');
+  let statusText = null;
+  if (statusNode) {
+    const copy = statusNode.cloneNode(true);
+    copy.querySelectorAll('.ss-sr-only').forEach((n) => n.remove());
+    statusText = copy.textContent.trim();
+  }
   const els = window.__ssMedia ?? [];
   const el = els.length ? els[els.length - 1] : null;
   const playing = els.filter((e) => !e.paused);
   return {
     label: q('footer.ss-player .ss-player__main')?.getAttribute('aria-label') ?? null,
-    status: q('footer.ss-player .ss-player__status')?.textContent?.trim() ?? null,
+    status: statusText,
     errText: q('footer.ss-player .ss-player__error')?.textContent ?? null,
     tryAgain: [...document.querySelectorAll('footer.ss-player .ss-player__text-btn')].some(
       (b) => b.textContent === 'Try again',
@@ -131,6 +144,7 @@ async function main() {
   }
   mkdirSync(OUT, { recursive: true });
   const baseUrl = process.env.LIVE_BASE_URL || `http://localhost:${PORT}/`;
+  const appHost = hostOf(baseUrl);
   const preview = process.env.LIVE_BASE_URL ? null : startPreview();
   let browser = null;
   let exitCode = 1;
@@ -173,29 +187,40 @@ async function main() {
       );
     });
 
-    // Media traffic to the stream hosts: open requests (for the switch check) and responses.
+    // Stream traffic: open requests (for the switch check), every response (status, redirect target)
+    // and every failed request, for the reason column.
     const openReqs = new Map();
-    const mediaLog = [];
+    const netLog = [];
     const failLog = [];
-    const isStream = (req) => STREAM_HOSTS.includes(hostOf(req.url()));
+    const isStreamReq = (req) =>
+      STREAM_TYPES.includes(req.resourceType()) && !API_HOST.test(hostOf(req.url())) && hostOf(req.url()) !== appHost;
     page.on('request', (req) => {
-      if (isStream(req)) openReqs.set(req, { url: req.url(), t: Date.now() });
+      if (isStreamReq(req)) openReqs.set(req, { url: req.url(), t: Date.now() });
     });
     page.on('requestfinished', (req) => openReqs.delete(req));
     page.on('requestfailed', (req) => {
       openReqs.delete(req);
-      if (isStream(req)) failLog.push({ t: Date.now(), host: hostOf(req.url()), text: req.failure()?.errorText ?? '' });
+      if (isStreamReq(req)) {
+        failLog.push({
+          t: Date.now(),
+          host: hostOf(req.url()),
+          via: hostOf(req.redirectedFrom()?.url() ?? ''),
+          text: req.failure()?.errorText ?? '',
+        });
+      }
     });
     page.on('response', (resp) => {
       const req = resp.request();
-      if (isStream(req)) {
-        mediaLog.push({
-          t: Date.now(),
-          host: hostOf(req.url()),
-          status: resp.status(),
-          ct: resp.headers()['content-type'] ?? '',
-        });
-      }
+      if (!isStreamReq(req)) return;
+      const headers = resp.headers();
+      netLog.push({
+        t: Date.now(),
+        host: hostOf(req.url()),
+        status: resp.status(),
+        location: headers.location ? hostOf(new URL(headers.location, req.url()).href) : '',
+        via: hostOf(req.redirectedFrom()?.url() ?? ''),
+        ct: headers['content-type'] ?? '',
+      });
     });
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
@@ -278,10 +303,25 @@ async function main() {
       return { samples, seq };
     }
 
-    // ---- Stations 1-4: click, then 12s of observation each. Station 2's click is the switch from station 1.
+    /** What the network showed for one station after its click: statuses, redirects, failures. */
+    function observedReason(rec, clickAt) {
+      const hops = netLog
+        .filter((n) => n.t >= clickAt && (n.host === rec.host || n.via === rec.host))
+        .slice(0, 4)
+        .map((n) => (n.status >= 300 && n.status < 400 ? `${n.status} ${n.host} -> ${n.location || '?'}` : `HTTP ${n.status} ${n.host}`));
+      const fails = failLog
+        .filter((f) => f.t >= clickAt && (f.host === rec.host || f.via === rec.host))
+        .map((f) => `${f.text || 'failed'} ${f.host}`);
+      const parts = [];
+      if (hops.length) parts.push([...new Set(hops)].join('; '));
+      if (fails.length) parts.push(`request failed: ${fails[0]}`);
+      if (!hops.length && !fails.length) parts.push('no request reached the stream host');
+      return parts.join('; ');
+    }
+
+    // ---- Every target, in order: click, then 12s of observation each.
     const results = [];
     let screenshotPlaying = false;
-    let playingHost = null; // host of the station that was Live when its window ended
     for (const target of TARGETS) {
       const rec = { target, row: null, live: false, pass: false };
       results.push(rec);
@@ -293,43 +333,26 @@ async function main() {
         say(`  station ${target.n}: no row on ${target.host} (rows seen: ${row.considered.join('; ') || 'none'})`);
         continue;
       }
-      // A click while another station plays is a switch: remember that station's open requests.
-      const prevHost = isLive(await snapshot()) ? playingHost : null;
-      const prevSet = prevHost
-        ? new Set([...openReqs.keys()].filter((r) => hostOf(r.url()) === prevHost))
-        : null;
-      let switchAt5 = null;
       const clickAt = await clickRow(row);
       progress(`station ${target.n}: clicked, observing ${WINDOW_MS / 1000}s`);
       const w = await watch(WINDOW_MS, (s) => {
-        if (s.t >= 5 && prevSet && switchAt5 === null) {
-          switchAt5 = {
-            nonPaused: s.nonPaused,
-            srcs: s.srcs,
-            prevOpen: [...prevSet].filter((r) => openReqs.has(r)).length,
-            prevCount: prevSet.size,
-          };
-        }
         if (isLive(s) && !rec.live) {
           rec.live = true;
           liveLog.push({ id: row.id, name: row.name });
         }
       });
-      progress(`station ${target.n}: label=${w.samples.at(-1).label} status=${w.samples.at(-1).status} pass=${rec.pass}`);
+      progress(`station ${target.n}: label=${w.samples.at(-1).label} status=${w.samples.at(-1).status} live=${rec.live}`);
       const at = (sec) => w.samples.find((s) => s.t >= sec) ?? w.samples[w.samples.length - 1];
       const t2 = at(2);
       const t10 = at(10);
       const end = w.samples[w.samples.length - 1];
-      const mediaHere = mediaLog.filter((m) => m.host === row.host && m.t >= clickAt);
       rec.name = row.name;
       rec.host = row.host;
       rec.codec = row.codec;
       rec.t2 = t2;
       rec.t10 = t10;
       rec.seq = w.seq;
-      rec.media = mediaHere[0] ? `${mediaHere[0].status} ${mediaHere[0].ct}` : 'none';
-      rec.mediaCount = mediaHere.length;
-      rec.failures = failLog.filter((f) => f.host === row.host && f.t >= clickAt).map((f) => f.text);
+      rec.reason = observedReason(rec, clickAt);
       rec.errCodes = [...new Set(w.samples.map((s) => s.errorCode).filter((c) => c !== null))];
       rec.sawTryAgain = w.samples.some((s) => s.tryAgain);
       rec.advance = t2.currentTime !== null && t10.currentTime !== null ? t10.currentTime - t2.currentTime : null;
@@ -343,88 +366,73 @@ async function main() {
         rec.live;
       rec.mediaTitle = t10.mediaTitle;
       rec.end = `${end.label}/${end.status}`;
-      rec.prevHost = prevHost;
-      rec.switch = switchAt5;
       rec.url = row.url;
-      playingHost = isLive(end) ? row.host : null;
       if (!screenshotPlaying && isLive(end)) {
         await page.screenshot({ path: join(OUT, 'playing-1440.png') });
         screenshotPlaying = true;
-        rec.screenshot = true;
       }
     }
 
-    // ---- Supplementary switch, reported but not part of the exit code: BBC playing, then FIP clicked.
-    let supp = null;
-    const bbc = results[1];
-    const fip = results[3];
-    if (bbc?.live && fip?.row?.found) {
-      const ensure = await findRow(bbc.target);
-      if (ensure.found) {
-        await clickRow(ensure);
-        if (await waitForLive(20000)) {
-          liveLog.push({ id: ensure.id, name: ensure.name });
-          const prevSet = new Set([...openReqs.keys()].filter((r) => hostOf(r.url()) === bbc.host));
-          const again = await findRow(fip.target);
-          if (again.found) {
-            await clickRow(again);
-            let at5 = null;
-            let liveSeen = false;
-            const w = await watch(WINDOW_MS, (s) => {
-              if (s.t >= 5 && at5 === null) {
-                at5 = {
-                  nonPaused: s.nonPaused,
-                  srcs: s.srcs,
-                  prevOpen: [...prevSet].filter((r) => openReqs.has(r)).length,
-                  prevCount: prevSet.size,
-                };
-              }
-              if (isLive(s) && !liveSeen) {
-                liveSeen = true;
-                liveLog.push({ id: again.id, name: again.name });
-              }
-            });
-            const end = w.samples[w.samples.length - 1];
-            supp = {
-              at5,
-              end: `${end.label}/${end.status}`,
-              ok:
-                !!at5 &&
-                at5.nonPaused === 1 &&
-                !at5.srcs.some((x) => x.includes(bbc.host)) &&
-                at5.prevCount > 0 &&
-                at5.prevOpen === 0,
-            };
-          }
+    const liveResults = results.filter((r) => r.live);
+    progress(`reached Live: ${liveResults.map((r) => `#${r.target.n}`).join(', ') || 'none'}`);
+
+    // ---- Switching: the first two stations that reached Live. From the first, click the second.
+    progress('switching, volume, pause, error, history');
+    let switchOk = false;
+    let switchLine = `switching: needs two stations that reached Live (have ${liveResults.length}); not measured`;
+    if (liveResults.length >= 2) {
+      const [from, to] = liveResults;
+      const now = await snapshot();
+      let fromPlaying = isLive(now) && now.srcs.some((x) => x.includes(from.host));
+      if (!fromPlaying) {
+        const again = await findRow(from.target);
+        if (again.found) {
+          await clickRow(again);
+          fromPlaying = await waitForLive(20000);
+          if (fromPlaying) liveLog.push({ id: again.id, name: again.name });
         }
       }
+      const again = await findRow(to.target);
+      if (fromPlaying && again.found) {
+        const prevSet = new Set([...openReqs.keys()].filter((r) => hostOf(r.url()) === from.host));
+        await clickRow(again);
+        let at5 = null;
+        let toLive = false;
+        await watch(WINDOW_MS, (s) => {
+          if (s.t >= 5 && at5 === null) {
+            at5 = {
+              nonPaused: s.nonPaused,
+              srcs: s.srcs,
+              prevOpen: [...prevSet].filter((r) => openReqs.has(r)).length,
+              prevCount: prevSet.size,
+            };
+          }
+          if (isLive(s) && !toLive) {
+            toLive = true;
+            liveLog.push({ id: again.id, name: again.name });
+          }
+        });
+        switchOk =
+          !!at5 &&
+          toLive &&
+          at5.nonPaused === 1 &&
+          !at5.srcs.some((x) => x.includes(from.host)) &&
+          at5.prevCount > 0 &&
+          at5.prevOpen === 0;
+        switchLine =
+          `switching ${from.target.n}->${to.target.n}: at t=5s non-paused=${at5?.nonPaused} ` +
+          `srcs=[${(at5?.srcs ?? []).map((x) => hostOf(x) || 'none').join(',')}] ` +
+          `station ${from.target.n} requests open=${at5?.prevOpen}/${at5?.prevCount} (at click); reached Live=${toLive} ${switchOk ? 'PASS' : 'FAIL'}`;
+      } else {
+        switchLine = `switching ${from.target.n}->${to.target.n}: ${fromPlaying ? 'second station row not found' : 'first station did not play again'} FAIL`;
+      }
     }
 
-    progress('switching, volume, pause, error, history');
-    // ---- Switching: station 1 playing, then station 2 clicked.
-    const s2 = results[1];
-    const switchOk =
-      !!s2?.switch &&
-      s2.prevHost === TARGETS[0].host &&
-      s2.switch.nonPaused === 1 &&
-      !s2.switch.srcs.some((src) => src.includes(TARGETS[0].host)) &&
-      s2.switch.prevCount > 0 &&
-      s2.switch.prevOpen === 0;
-    const switchLine = s2?.switch
-      ? `switching 1->2: station 1 Live before click=${s2.prevHost === TARGETS[0].host}; at t=5s non-paused elements=${s2.switch.nonPaused} ` +
-        `srcs=[${s2.switch.srcs.map((x) => hostOf(x) || x || 'none').join(',')}] station-1 requests open=${s2.switch.prevOpen}/${s2.switch.prevCount} (of those at click)`
-      : 'switching 1->2: not measured (station 1 was not playing when station 2 was clicked)';
-    const extraSwitch = results
-      .filter((r) => r.switch && r.n !== 2)
-      .map((r) => `switch into station ${r.target.n} from ${r.prevHost}: non-paused=${r.switch.nonPaused} ` +
-        `srcs=[${r.switch.srcs.map((x) => hostOf(x) || 'none').join(',')}] previous requests open=${r.switch.prevOpen}/${r.switch.prevCount}`);
-
-    // ---- Volume and pause need a station that is Live.
-    const liveRec = [...results].reverse().find((r) => r.live && r.row?.found);
+    // ---- Volume and pause need a station that is Live (the switch target is playing after the switch).
+    const liveRec = [...liveResults].reverse()[0];
     let playingNow = false;
     if (liveRec) {
-      const cur = await snapshot();
-      if (isLive(cur)) {
+      if (isLive(await snapshot())) {
         playingNow = true;
       } else {
         const again = await findRow(liveRec.target);
@@ -456,10 +464,15 @@ async function main() {
       pauseLine =
         `pause: label=${p1.label} status=${p1.status} paused=${p1.paused} currentTime ${fmt(p1.currentTime)} -> ${fmt(p2.currentTime)} ` +
         `${pauseOk ? 'PASS' : 'FAIL'}`;
+      // Resume so the error test starts from a playing state.
+      if (pauseOk) {
+        await page.locator('footer.ss-player .ss-player__main').click();
+        await waitForLive(20000);
+      }
     }
 
-    // ---- Error: abort one stream host, click its station, expect an error sentence and Try again.
-    const errRec = results[2]?.row?.found ? results[2] : results.find((r) => r.row?.found);
+    // ---- Error: abort the host of a station that played, click it, expect an error sentence and Try again.
+    const errRec = liveResults.find((r) => r.row?.found) ?? results.find((r) => r.row?.found);
     let errorOk = false;
     let errorLine = 'error: no station to test';
     if (errRec) {
@@ -485,7 +498,7 @@ async function main() {
       if (shown) await page.screenshot({ path: join(OUT, 'error-1440.png') });
       await page.unroute(predicate, handler);
       const other =
-        results.find((r) => r.live && r.host !== errHost) ??
+        liveResults.find((r) => r.host !== errHost) ??
         results.find((r) => r.row?.found && r.host !== errHost && r.n !== errRec.target.n);
       let otherOk = false;
       let otherLine = 'no other station to test';
@@ -513,28 +526,32 @@ async function main() {
     }
 
     // ---- History: must list the stations that reached Live, newest first.
-    let historyOk = false;
-    let historyLine = 'history: not run';
     await page.locator('header nav button', { hasText: /^History$/ }).click();
     await page.waitForSelector('#ss-history-title', { timeout: 10000 });
     await sleep(500);
     const names = await page.locator('.ss-view-row .ss-station-row__name').allTextContents();
     const seen = new Map();
-    for (const e of liveLog) seen.set(e.id, e.name); // last Live occurrence wins; insertion order = first occurrence
+    for (const e of liveLog) seen.set(e.id, e.name); // last Live occurrence wins
     const order = [];
     for (const e of [...liveLog].reverse()) {
       if (!order.includes(e.id)) order.push(e.id);
     }
     const expected = order.map((id) => seen.get(id));
-    historyOk = expected.length > 0 && JSON.stringify(expected) === JSON.stringify(names);
-    historyLine = `history: expected newest first=[${expected.join(' | ')}] shown=[${names.join(' | ')}] ${historyOk ? 'PASS' : 'FAIL'}`;
+    const historyOk = expected.length > 0 && JSON.stringify(expected) === JSON.stringify(names);
+    const historyLine = `history: expected newest first=[${expected.join(' | ')}] shown=[${names.join(' | ')}] ${historyOk ? 'PASS' : 'FAIL'}`;
 
     progress('report');
     // ---- Report.
-    const header = ['Station', 'Host', 'Stream path', 'Codec', 'Label(t10)', 'Status(t10)', 'paused', 'readyState', 'networkState', 'ct t2', 'ct t10', 'advance', 'error', 'media', 'mediaSession title', 'Result'];
+    const header = [
+      'Station', 'Host', 'Stream path', 'Codec', 'Label(t10)', 'Status(t10)', 'paused', 'readyState', 'networkState',
+      'ct t2', 'ct t10', 'advance', 'error', 'Observed reason', 'Result',
+    ];
     const rows = results.map((r) => {
-      const path = r.row?.url ? new URL(r.row.url).pathname.slice(0, 28) : '-';
-      if (!r.row || !r.row.found) return [`#${r.target.n} ${r.target.query}`, r.target.host, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', `no row (${(r.row?.considered ?? []).join('; ') || 'none'})`, '-', 'FAIL'];
+      if (!r.row || !r.row.found) {
+        return [`#${r.target.n} ${r.target.query}`, r.target.host, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-',
+          `no search row (rows seen: ${(r.row?.considered ?? []).join('; ') || 'none'})`, 'FAIL'];
+      }
+      const path = r.url ? new URL(r.url).pathname.slice(0, 28) : '-';
       return [
         r.name,
         r.host,
@@ -549,8 +566,7 @@ async function main() {
         fmt(r.t10.currentTime),
         fmt(r.advance),
         r.errCodes.length ? r.errCodes.join(',') : 'none',
-        r.media + (r.failures.length ? ` failed:${r.failures[0]}` : '') + ` (${r.mediaCount})`,
-        fmt(r.mediaTitle),
+        r.pass ? '-' : r.reason,
         r.pass ? 'PASS' : 'FAIL',
       ];
     });
@@ -566,13 +582,6 @@ async function main() {
       if (r.seq) say(`  station ${r.target.n} status sequence: ${r.seq.join(' -> ')}`);
     }
     say(`  ${switchLine}`);
-    say(
-      supp
-        ? `  supplementary switch BBC->FIP (not in exit code): non-paused at t=5s=${supp.at5?.nonPaused} srcs=[${(supp.at5?.srcs ?? []).map((x) => hostOf(x) || 'none').join(',')}] ` +
-            `BBC requests open=${supp.at5?.prevOpen}/${supp.at5?.prevCount} end=${supp.end} ${supp.ok ? 'PASS' : 'FAIL'}`
-        : '  supplementary switch BBC->FIP: not measured (BBC or FIP unavailable)',
-    );
-    for (const line of extraSwitch) say(`  ${line}`);
     say(`  ${volumeLine}`);
     say(`  ${pauseLine}`);
     say(`  ${errorLine}`);
@@ -581,7 +590,7 @@ async function main() {
     if (pageErrors.length) say(`  uncaught page errors: ${pageErrors.length} (first: ${pageErrors[0]})`);
 
     const playedCount = results.filter((r) => r.pass).length;
-    const allOk = playedCount >= 1 && switchOk && pauseOk && volumeOk && historyOk && errorOk;
+    const allOk = playedCount >= MIN_PLAYING && switchOk && pauseOk && volumeOk && historyOk && errorOk;
     say('');
     say(`LIVE-PLAYBACK: ${playedCount}/4 stations played`);
     say(`overall: ${allOk ? 'PASS' : 'FAIL'}`);

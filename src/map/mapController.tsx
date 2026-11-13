@@ -27,13 +27,16 @@ const ATTRIBUTION = 'Stations: Radio Browser · Map: Natural Earth';
 const WORLD_BOUNDS = L.latLngBounds([-75, -185], [85, 185]);
 const MAX_ZOOM = 8;
 const PROGRESS_MIN_ZOOM = 5;
-const FOCUS_ZOOM = 6;
+// Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
+const FOCUS_MIN_ZOOM = 5;
+const FOCUS_MAX_ZOOM = 6;
 const LOAD_DEBOUNCE_MS = 600;
 const MAX_RADIUS_KM = 600;
 const START_CENTER: [number, number] = [20, 10];
 const NARROW_PANEL_PX = 768;
 const NARROW_EXTRA_ZOOM = 0.5;
-const SELECTED_Z_OFFSET = 1000;
+// Above every marker and cluster: marker z-index is the pixel y plus this offset.
+const SELECTED_Z_OFFSET = 10000;
 
 interface Entry {
   station: Station;
@@ -60,14 +63,33 @@ function readToken(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
-  return L.divIcon({
-    className: 'ss-cluster-icon',
-    html: `<div class="ss-cluster"><span>${cluster.getChildCount()}</span></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  });
+/** Cluster badge: a 20px visual in a 24px hit area. Labelled with its station count. */
+class ClusterIcon extends L.DivIcon {
+  private readonly count: number;
+
+  constructor(count: number) {
+    super({
+      className: 'ss-cluster-icon',
+      html: `<div class="ss-cluster"><span>${count}</span></div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+    this.count = count;
+  }
+
+  override createIcon(oldIcon?: HTMLElement): HTMLElement {
+    const el = super.createIcon(oldIcon);
+    el.setAttribute('aria-label', `${this.count} stations`);
+    return el;
+  }
 }
+
+function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
+  return new ClusterIcon(cluster.getChildCount());
+}
+
+// Clusters are not tab stops: the map container is the single tab stop.
+L.MarkerCluster.mergeOptions({ keyboard: false });
 
 function wrapLng(lng: number): number {
   return ((((lng + 180) % 360) + 360) % 360) - 180;
@@ -97,6 +119,8 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   let loadTimer: ReturnType<typeof setTimeout> | undefined;
   // At most one reveal is pending: the latest selection wins.
   let pendingReveal: (() => void) | null = null;
+  // The blue selected dot is its own marker on the map, outside the cluster group, so it is never hidden.
+  let selectionMarker: L.Marker | null = null;
   const entries = new Map<string, Entry>();
 
   const cluster = L.markerClusterGroup({
@@ -139,12 +163,24 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     node.setAttribute('aria-label', e.station.name);
   }
 
-  function setEntryIcon(id: string, selected: boolean) {
-    const e = entries.get(id);
-    if (!e) return;
-    e.marker.setIcon(selected ? SELECTED_ICON : STATION_ICON);
-    e.marker.setZIndexOffset(selected ? SELECTED_Z_OFFSET : 0);
-    label(id); // setIcon rebuilds the element, so the label must be re-applied
+  /** Keeps the selection dot on top of the selected station, whether or not its marker is clustered. */
+  function syncSelection() {
+    const e = selectedId !== null ? entries.get(selectedId) : undefined;
+    if (!e) {
+      selectionMarker?.remove();
+      selectionMarker = null;
+      return;
+    }
+    if (selectionMarker === null) {
+      selectionMarker = L.marker(e.marker.getLatLng(), {
+        icon: SELECTED_ICON,
+        interactive: false,
+        keyboard: false,
+        zIndexOffset: SELECTED_Z_OFFSET,
+      }).addTo(map);
+    } else {
+      selectionMarker.setLatLng(e.marker.getLatLng());
+    }
   }
 
   function openPopupFor(id: string) {
@@ -167,12 +203,10 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
 
   function createMarker(s: Station, lat: number, lng: number): L.Marker {
-    const selected = s.id === selectedId;
     const marker = L.marker([lat, lng], {
-      icon: selected ? SELECTED_ICON : STATION_ICON,
-      keyboard: true,
+      icon: STATION_ICON,
+      keyboard: false,
       title: s.name,
-      zIndexOffset: selected ? SELECTED_Z_OFFSET : 0,
     });
     marker.on('click', () => activate(s.id));
     marker.on('add', () => label(s.id));
@@ -208,6 +242,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     if (added.length > 0) cluster.addLayers(added);
 
     if (openId !== null && !entries.has(openId)) closePopup();
+    syncSelection();
   }
 
   function cancelPendingReveal() {
@@ -219,14 +254,15 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   /** Pans and zooms so the marker is on screen, then opens its popup. Reduced motion: no animation. */
   function focusStation(e: Entry) {
     const ll = e.marker.getLatLng();
-    const zoom = Math.max(map.getZoom(), FOCUS_ZOOM);
+    const zoom = Math.min(FOCUS_MAX_ZOOM, Math.max(map.getZoom(), FOCUS_MIN_ZOOM));
     const id = e.station.id;
     cancelPendingReveal();
+    // The popup is anchored at the station's coordinates, so it opens even while the marker is inside a cluster.
     const reveal = () => {
       pendingReveal = null;
       // A later selection replaced this one while the map was moving: do not open it.
       if (selectedId !== id) return;
-      cluster.zoomToShowLayer(e.marker, () => openPopupFor(id));
+      openPopupFor(id);
     };
 
     if (prefersReducedMotion()) {
@@ -245,13 +281,8 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
 
   function setSelected(station: Station | null) {
     if (disposed) return;
-    const id = station ? station.id : null;
-    if (id !== selectedId) {
-      const prev = selectedId;
-      selectedId = id;
-      if (prev !== null) setEntryIcon(prev, false);
-      if (id !== null) setEntryIcon(id, true);
-    }
+    selectedId = station ? station.id : null;
+    syncSelection();
     const e = station ? entries.get(station.id) : undefined;
     if (!e) {
       cancelPendingReveal();
@@ -340,6 +371,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
       el.removeEventListener('keydown', onKeyDown);
       disposeOpen();
       entries.clear();
+      selectionMarker = null;
       map.remove();
     },
   };

@@ -57,7 +57,13 @@ export function WorldMap() {
 
   return (
     <section className="ss-map" aria-label="World map">
-      <div ref={canvasRef} className="ss-map__canvas" />
+      {/* Leaflet makes this element the single tab stop (keyboard pan and zoom); markers are not tab stops. */}
+      <div
+        ref={canvasRef}
+        className="ss-map__canvas"
+        role="region"
+        aria-label="World map of radio stations. Use the station list to browse stations by keyboard."
+      />
       {chip && (
         <p className="ss-map__status" role="status">
           {chip}

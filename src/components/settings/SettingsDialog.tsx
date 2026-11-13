@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type MouseEvent } from 'react';
 import { player } from '@/audio/player';
 import { CloseIcon } from '@/components/common/icons';
 import { IconButton } from '@/components/common/IconButton';
@@ -81,11 +81,13 @@ export function SettingsDialog() {
             <div className="ss-settings__control">
               <input
                 id="ss-default-volume"
+                className="ss-range"
                 type="range"
                 min={0}
                 max={1}
                 step={0.01}
                 value={defaultVolume}
+                style={{ '--ss-fill': `${Math.round(defaultVolume * 100)}%` } as CSSProperties}
                 onChange={onVolume}
               />
               <output htmlFor="ss-default-volume" className="ss-settings__readout">

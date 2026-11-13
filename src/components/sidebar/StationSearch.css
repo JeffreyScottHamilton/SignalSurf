@@ -40,7 +40,19 @@
   cursor: pointer;
 }
 
+/* Desktop and tablet: the placeholder must fit the 280px tablet sidebar. */
+@media (min-width: 768px) {
+  .ss-search__input {
+    font-size: 13px;
+    padding: 0 var(--ss-2) 0 32px;
+  }
+}
+
 @media (max-width: 767px) {
+  .ss-search {
+    height: 44px;
+  }
+
   .ss-search__input {
     font-size: 16px;
   }
