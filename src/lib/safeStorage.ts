@@ -34,11 +34,3 @@ export function writeJSON(key: string, value: unknown): boolean {
     return false;
   }
 }
-
-export function removeKey(key: string): void {
-  try {
-    globalThis.localStorage.removeItem(key);
-  } catch {
-    // Storage unavailable: nothing persisted, nothing to remove.
-  }
-}

@@ -8,6 +8,7 @@ import { settings } from '@/storage/settings';
 import type { PlayerState, Station } from '@/types';
 
 const LOAD_TIMEOUT_MS = 15_000;
+const STALL_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 1_500;
 const HLS_MIME = 'application/vnd.apple.mpegurl';
 const MEDIA_ERR_DECODE = 3;
@@ -15,12 +16,18 @@ const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
 const MESSAGES = {
   unsupported: "This station uses a stream format this browser can't play.",
+  unplayable: "This station couldn't be played. It may be offline or use a format this browser doesn't support.",
   network: "This station isn't responding right now. Try again or pick another station.",
   timeout: 'This station took too long to respond.',
 } as const;
 
-/** `ended` and `network` get one automatic retry each; `timeout` and `unsupported` never retry. */
-type FailKind = 'network' | 'unsupported' | 'timeout' | 'ended';
+/**
+ * `ended`, `network` and `unplayable` get one automatic retry each. `unplayable` covers
+ * media errors that Chrome also raises for unreachable streams, so it is not treated as
+ * a definite format problem. `timeout` and `unsupported` never retry; `unsupported` is
+ * only used when no HLS support exists at all.
+ */
+type FailKind = 'network' | 'unplayable' | 'unsupported' | 'timeout' | 'ended';
 
 const store = createStore<PlayerState>({
   station: null,
@@ -41,6 +48,7 @@ let reconnectUsed = false;
 let startedToken = 0;
 let loadTimer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let stallTimer: ReturnType<typeof setTimeout> | null = null;
 let listeners: [string, EventListener][] = [];
 let hlsInstance: { destroy(): void } | null = null;
 const startedListeners = new Set<(s: Station) => void>();
@@ -65,8 +73,10 @@ function navFor(station: Station | null, list: Station[]): Pick<PlayerState, 'ha
 function clearTimers(): void {
   if (loadTimer !== null) clearTimeout(loadTimer);
   if (retryTimer !== null) clearTimeout(retryTimer);
+  if (stallTimer !== null) clearTimeout(stallTimer);
   loadTimer = null;
   retryTimer = null;
+  stallTimer = null;
 }
 
 function detachListeners(): void {
@@ -142,7 +152,7 @@ function needsHls(station: Station): boolean {
 function fail(kind: FailKind): void {
   unload();
   const t = invalidate();
-  if (kind === 'network' && !autoRetryUsed) {
+  if ((kind === 'network' || kind === 'unplayable') && !autoRetryUsed) {
     autoRetryUsed = true;
     scheduleRetry(t);
     return;
@@ -152,8 +162,20 @@ function fail(kind: FailKind): void {
     scheduleRetry(t);
     return;
   }
-  const message = kind === 'unsupported' ? MESSAGES.unsupported : kind === 'timeout' ? MESSAGES.timeout : MESSAGES.network;
-  setState({ status: 'error', error: message });
+  setState({ status: 'error', error: messageFor(kind) });
+}
+
+function messageFor(kind: FailKind): string {
+  switch (kind) {
+    case 'unsupported':
+      return MESSAGES.unsupported;
+    case 'unplayable':
+      return MESSAGES.unplayable;
+    case 'timeout':
+      return MESSAGES.timeout;
+    default:
+      return MESSAGES.network;
+  }
 }
 
 function scheduleRetry(t: number): void {
@@ -177,7 +199,7 @@ function onPlayRejected(t: number, err: unknown): void {
     setState({ status: 'paused', error: null });
     return;
   }
-  fail(name === 'NotSupportedError' ? 'unsupported' : 'network');
+  fail(name === 'NotSupportedError' ? 'unplayable' : 'network');
 }
 
 function attachListeners(el: HTMLAudioElement, t: number): void {
@@ -190,9 +212,26 @@ function attachListeners(el: HTMLAudioElement, t: number): void {
     listeners.push([type, listener]);
   };
 
+  // Starts a 15s clock when playback stops for buffering. If it never recovers, the normal failure path runs.
+  const onBuffering = () => {
+    if (store.get().status !== 'playing') return;
+    setState({ status: 'buffering' });
+    if (stallTimer !== null) return;
+    stallTimer = setTimeout(() => {
+      stallTimer = null;
+      if (t !== token) return;
+      fail('network');
+    }, STALL_TIMEOUT_MS);
+  };
+
   add('playing', () => {
     if (loadTimer !== null) clearTimeout(loadTimer);
     loadTimer = null;
+    if (stallTimer !== null) clearTimeout(stallTimer);
+    stallTimer = null;
+    // A stream that plays again has earned a fresh retry budget for its next drop.
+    autoRetryUsed = false;
+    reconnectUsed = false;
     setState({ status: 'playing', error: null });
     if (startedToken !== token) {
       startedToken = token;
@@ -203,16 +242,13 @@ function attachListeners(el: HTMLAudioElement, t: number): void {
       }
     }
   });
-  add('waiting', () => {
-    if (store.get().status === 'playing') setState({ status: 'buffering' });
-  });
-  add('stalled', () => {
-    if (store.get().status === 'playing') setState({ status: 'buffering' });
-  });
+  add('waiting', onBuffering);
+  add('stalled', onBuffering);
   add('error', () => {
     const code = el.error?.code ?? 0;
-    const unsupported = code === MEDIA_ERR_SRC_NOT_SUPPORTED || code === MEDIA_ERR_DECODE;
-    fail(unsupported ? 'unsupported' : 'network');
+    // SRC_NOT_SUPPORTED is also raised for unreachable streams, so it is not a definite format error.
+    const unplayable = code === MEDIA_ERR_SRC_NOT_SUPPORTED || code === MEDIA_ERR_DECODE;
+    fail(unplayable ? 'unplayable' : 'network');
   });
   add('ended', () => fail('ended'));
 }
@@ -236,7 +272,7 @@ async function startSession(station: Station, t: number): Promise<void> {
         hlsInstance = hls;
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (t !== token || !data.fatal) return;
-          fail(data.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'unsupported');
+          fail(data.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'unplayable');
         });
         hls.loadSource(station.streamUrl);
         hls.attachMedia(el);

@@ -1,6 +1,6 @@
 import { useStore } from '@/lib/createStore';
 import type { Station } from '@/types';
-import { createPersisted, isStationSnapshot } from './persisted';
+import { createPersisted, sanitizeStation } from './persisted';
 
 export const FAVORITES_KEY = 'signalsurf:favorites:v1';
 
@@ -10,9 +10,10 @@ function parseFavorites(raw: unknown): Station[] {
   const seen = new Set<string>();
   const out: Station[] = [];
   for (const item of raw) {
-    if (!isStationSnapshot(item) || seen.has(item.id)) continue;
-    seen.add(item.id);
-    out.push(item);
+    const s = sanitizeStation(item);
+    if (s === null || seen.has(s.id)) continue;
+    seen.add(s.id);
+    out.push(s);
   }
   return out;
 }

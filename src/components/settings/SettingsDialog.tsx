@@ -8,6 +8,7 @@ import { storageAvailable } from '@/lib/safeStorage';
 import { setSettingsOpen, uiStore } from '@/state/ui';
 import { favorites, useFavorites } from '@/storage/favorites';
 import { history, useHistory } from '@/storage/history';
+import { storageHealth } from '@/storage/persisted';
 import { settings, useSettings } from '@/storage/settings';
 import './SettingsDialog.css';
 
@@ -16,6 +17,7 @@ export function SettingsDialog() {
   const ref = useRef<HTMLDialogElement>(null);
   // Checked once at mount: the dialog is always mounted, so this runs at app start.
   const [storageOk] = useState(storageAvailable);
+  const writeFailed = useStore(storageHealth, (h) => h.writeFailed);
   const { defaultVolume } = useSettings();
   const favs = useFavorites();
   const entries = useHistory();
@@ -65,7 +67,7 @@ export function SettingsDialog() {
           </IconButton>
         </div>
 
-        {!storageOk && (
+        {(!storageOk || writeFailed) && (
           <p className="ss-settings__notice">
             This browser is blocking local storage, so favorites and history won't be saved after you close the tab.
           </p>

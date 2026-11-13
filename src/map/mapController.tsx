@@ -95,6 +95,8 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   let openId: string | null = null;
   let openRoot: Root | null = null;
   let loadTimer: ReturnType<typeof setTimeout> | undefined;
+  // At most one reveal is pending: the latest selection wins.
+  let pendingReveal: (() => void) | null = null;
   const entries = new Map<string, Entry>();
 
   const cluster = L.markerClusterGroup({
@@ -208,12 +210,24 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     if (openId !== null && !entries.has(openId)) closePopup();
   }
 
+  function cancelPendingReveal() {
+    if (pendingReveal === null) return;
+    map.off('moveend', pendingReveal);
+    pendingReveal = null;
+  }
+
   /** Pans and zooms so the marker is on screen, then opens its popup. Reduced motion: no animation. */
   function focusStation(e: Entry) {
     const ll = e.marker.getLatLng();
     const zoom = Math.max(map.getZoom(), FOCUS_ZOOM);
     const id = e.station.id;
-    const reveal = () => cluster.zoomToShowLayer(e.marker, () => openPopupFor(id));
+    cancelPendingReveal();
+    const reveal = () => {
+      pendingReveal = null;
+      // A later selection replaced this one while the map was moving: do not open it.
+      if (selectedId !== id) return;
+      cluster.zoomToShowLayer(e.marker, () => openPopupFor(id));
+    };
 
     if (prefersReducedMotion()) {
       map.setView(ll, zoom, { animate: false });
@@ -224,6 +238,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
       reveal();
       return;
     }
+    pendingReveal = reveal;
     map.once('moveend', reveal);
     map.flyTo(ll, zoom, { duration: 0.6 });
   }
@@ -239,6 +254,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     }
     const e = station ? entries.get(station.id) : undefined;
     if (!e) {
+      cancelPendingReveal();
       closePopup();
       return;
     }

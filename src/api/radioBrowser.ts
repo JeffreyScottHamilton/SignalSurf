@@ -283,7 +283,7 @@ export function fetchMapStations(signal?: AbortSignal): Promise<Station[]> {
       order: 'clickcount',
       reverse: 'true',
       limit: String(MAP_LIMIT),
-    }).then((rows) => dedupeStations(toStations(rows)).filter((s) => s.coords !== null));
+    }).then((rows) => dedupeStations(toStations(rows).filter((s) => s.coords !== null)));
     mapPromise = p;
     // A failed load is not cached, so the next call retries.
     p.catch(() => {
@@ -297,7 +297,12 @@ function isValidCoords(c: Coords): boolean {
   return Number.isFinite(c.lat) && Number.isFinite(c.lng) && Math.abs(c.lat) <= 90 && Math.abs(c.lng) <= 180;
 }
 
-/** Stations with coordinates within radiusKm of c, most popular first. Cached per rounded position and radius. */
+/** Centre snapped to a 0.5 degree grid. Used for both the cache key and the request, so a hit always matches. */
+function snapToHalfDegree(v: number): number {
+  return Math.round(v * 2) / 2;
+}
+
+/** Stations with coordinates within radiusKm of c, most popular first. Cached per 0.5 degree cell and radius. */
 export function fetchStationsNear(
   c: Coords,
   radiusKm: number,
@@ -307,18 +312,20 @@ export function fetchStationsNear(
   if (!isValidCoords(c)) return Promise.reject(new RadioApiError('parse', 'Invalid map position.'));
   const km = Number.isFinite(radiusKm) ? Math.min(Math.max(radiusKm, 1), NEAR_MAX_RADIUS_KM) : 50;
   const size = Math.max(1, Math.floor(limit));
-  const key = `${Math.round(c.lat)}|${Math.round(c.lng)}|${km}|${size}`;
+  const lat = snapToHalfDegree(c.lat);
+  const lng = snapToHalfDegree(c.lng);
+  const key = `${lat}|${lng}|${km}|${size}`;
 
   let p = nearCache.get(key);
   if (p === undefined) {
     const req = apiList('/json/stations/search', {
-      geo_lat: String(c.lat),
-      geo_long: String(c.lng),
+      geo_lat: String(lat),
+      geo_long: String(lng),
       geo_distance: String(Math.round(km * 1000)),
       order: 'clickcount',
       reverse: 'true',
       limit: String(size),
-    }).then((rows) => dedupeStations(toStations(rows)).filter((s) => s.coords !== null));
+    }).then((rows) => dedupeStations(toStations(rows).filter((s) => s.coords !== null)));
     p = req;
     nearCache.set(key, req);
     req.catch(() => {

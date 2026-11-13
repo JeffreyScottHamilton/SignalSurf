@@ -10,9 +10,14 @@ function startOfDay(ms: number): number {
 /** "Region, Country" with missing parts omitted. Never guesses. */
 export function stationLocation(s: Station): string {
   const parts = [s.region, s.country]
-    .map((p) => (p ?? '').trim())
+    .map((p: unknown) => (typeof p === 'string' ? p.trim() : ''))
     .filter((p) => p.length > 0);
   return parts.join(', ');
+}
+
+/** The station homepage as a link target: http(s) only, otherwise null. */
+export function externalHref(url: string | null | undefined): string | null {
+  return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
 }
 
 /** Time such as "2:14 PM" when played today, otherwise a short date such as "Nov 12". */

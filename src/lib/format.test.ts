@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Station } from '@/types';
-import { dayLabel, formatPlayedAt, stationLocation } from './format';
+import { dayLabel, externalHref, formatPlayedAt, stationLocation } from './format';
 
 // Fixed "now": Friday 13 November 2026, 15:30 local time.
 const NOW = new Date(2026, 10, 13, 15, 30).getTime();
@@ -44,6 +44,31 @@ describe('stationLocation', () => {
 
   it('returns an empty string when neither part exists', () => {
     expect(stationLocation(station({ region: '  ', country: null }))).toBe('');
+  });
+});
+
+describe('stationLocation with malformed parts', () => {
+  it('ignores non-string parts instead of throwing', () => {
+    const bad = { ...station({}), region: 5, country: 'Norway' } as unknown as Station;
+    expect(stationLocation(bad)).toBe('Norway');
+    const both = { ...station({}), region: { x: 1 }, country: false } as unknown as Station;
+    expect(stationLocation(both)).toBe('');
+  });
+});
+
+describe('externalHref', () => {
+  it('returns http and https homepages unchanged', () => {
+    expect(externalHref('https://example.com/')).toBe('https://example.com/');
+    expect(externalHref('http://example.com/')).toBe('http://example.com/');
+  });
+
+  it('returns null for anything else', () => {
+    expect(externalHref('javascript:alert(1)')).toBeNull();
+    expect(externalHref('ftp://example.com/')).toBeNull();
+    expect(externalHref('example.com')).toBeNull();
+    expect(externalHref('')).toBeNull();
+    expect(externalHref(null)).toBeNull();
+    expect(externalHref(undefined)).toBeNull();
   });
 });
 

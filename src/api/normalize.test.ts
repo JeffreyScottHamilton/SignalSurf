@@ -172,12 +172,12 @@ describe('dedupeStations', () => {
     expect(out.map((s) => s.id)).toEqual(['a']);
   });
 
-  it('removes the same name in the same country, ignoring case', () => {
+  it('keeps distinct regional stations that share a name in the same country', () => {
     const out = dedupeStations([
       station({ id: 'a', name: 'Radio Plus', countryCode: 'DE', streamUrl: 'https://one.test/' }),
       station({ id: 'b', name: 'RADIO PLUS', countryCode: 'de', streamUrl: 'https://two.test/' }),
       station({ id: 'c', name: 'Radio Plus', countryCode: 'AT', streamUrl: 'https://three.test/' }),
     ]);
-    expect(out.map((s) => s.id)).toEqual(['a', 'c']);
+    expect(out.map((s) => s.id)).toEqual(['a', 'b', 'c']);
   });
 });

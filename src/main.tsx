@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles/tokens.css';
 import './styles/base.css';
 import { App } from './App';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { player } from './audio/player';
 import { history } from './storage/history';
 
@@ -14,6 +15,8 @@ if (!rootEl) throw new Error('Missing #root element');
 
 createRoot(rootEl).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

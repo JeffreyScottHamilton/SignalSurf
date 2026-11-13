@@ -142,19 +142,17 @@ export function normalizeStation(raw: unknown): Station | null {
 
 /**
  * Removes repeats, keeping the first occurrence. A station is a repeat when its
- * id, its stream URL, or its lower-cased name plus country code was already seen.
+ * id or its stream URL was already seen. Same-named stations in one country are
+ * kept: they are often distinct regional broadcasters.
  */
 export function dedupeStations(list: Station[]): Station[] {
   const ids = new Set<string>();
   const urls = new Set<string>();
-  const named = new Set<string>();
   const out: Station[] = [];
   for (const s of list) {
-    const nameKey = `${s.name.toLowerCase()}|${(s.countryCode ?? '').toLowerCase()}`;
-    if (ids.has(s.id) || urls.has(s.streamUrl) || named.has(nameKey)) continue;
+    if (ids.has(s.id) || urls.has(s.streamUrl)) continue;
     ids.add(s.id);
     urls.add(s.streamUrl);
-    named.add(nameKey);
     out.push(s);
   }
   return out;

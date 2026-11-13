@@ -287,6 +287,17 @@ describe('fetchMapStations', () => {
     expect(param(search[0], 'order')).toBe('clickcount');
   });
 
+  it('drops stations without coordinates before dedupe, so a coord-less copy cannot hide the mapped one', async () => {
+    installFetch(() =>
+      json([
+        rec('nocoord', { url_resolved: 'https://stream.test/shared' }),
+        rec('mapped', { url_resolved: 'https://stream.test/shared', geo_lat: 1, geo_long: 2 }),
+      ]),
+    );
+    const out = await api.fetchMapStations();
+    expect(out.map((s) => s.id)).toEqual(['mapped']);
+  });
+
   it('does not cache a failed load', async () => {
     let fail = true;
     installFetch(() => {
@@ -303,21 +314,49 @@ describe('fetchMapStations', () => {
 describe('fetchStationsNear', () => {
   it('sends the position, distance in metres, and the default limit', async () => {
     installFetch(() => json([]));
-    await api.fetchStationsNear({ lat: 52.5, lng: 13.4 }, 50);
+    await api.fetchStationsNear({ lat: 52.5, lng: 13.5 }, 50);
     const u = searchCalls()[0];
     expect(param(u, 'geo_lat')).toBe('52.5');
-    expect(param(u, 'geo_long')).toBe('13.4');
+    expect(param(u, 'geo_long')).toBe('13.5');
     expect(param(u, 'geo_distance')).toBe('50000');
     expect(param(u, 'limit')).toBe('200');
   });
 
-  it('caches by position rounded to 1 degree and by radius', async () => {
+  it('snaps the request centre to a 0.5 degree grid, the same centre the cache key uses', async () => {
+    installFetch(() => json([]));
+    await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 50);
+    const u = searchCalls()[0];
+    expect(param(u, 'geo_lat')).toBe('52.5');
+    expect(param(u, 'geo_long')).toBe('13');
+  });
+
+  it('caches by position snapped to 0.5 degrees and by radius', async () => {
     installFetch(() => json([rec('g1', { geo_lat: 52.5, geo_long: 13.4 })]));
     await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 50);
     await api.fetchStationsNear({ lat: 52.3, lng: 13.1 }, 50);
     expect(searchCalls()).toHaveLength(1);
     await api.fetchStationsNear({ lat: 52.3, lng: 13.1 }, 100);
     expect(searchCalls()).toHaveLength(2);
+  });
+
+  it('does not share a cached answer between areas half a degree apart', async () => {
+    installFetch((url) => json([rec(`at-${url.searchParams.get('geo_lat')}`, { geo_lat: 1, geo_long: 2 })]));
+    const north = await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 50);
+    const south = await api.fetchStationsNear({ lat: 52.8, lng: 13.2 }, 50);
+    expect(searchCalls()).toHaveLength(2);
+    expect(north.map((s) => s.id)).toEqual(['at-52.5']);
+    expect(south.map((s) => s.id)).toEqual(['at-53']);
+  });
+
+  it('drops stations without coordinates before dedupe, so a coord-less copy cannot hide the mapped one', async () => {
+    installFetch(() => {
+      return json([
+        rec('nocoord', { url_resolved: 'https://stream.test/shared' }),
+        rec('mapped', { url_resolved: 'https://stream.test/shared', geo_lat: 52.5, geo_long: 13.5 }),
+      ]);
+    });
+    const out = await api.fetchStationsNear({ lat: 52.5, lng: 13.5 }, 50);
+    expect(out.map((s) => s.id)).toEqual(['mapped']);
   });
 
   it('rejects an invalid position', async () => {

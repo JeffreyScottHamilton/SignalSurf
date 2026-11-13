@@ -5,6 +5,7 @@ const reportClick = vi.hoisted(() => vi.fn());
 vi.mock('@/api/radioBrowser', () => ({ reportClick }));
 
 const UNSUPPORTED = "This station uses a stream format this browser can't play.";
+const UNPLAYABLE = "This station couldn't be played. It may be offline or use a format this browser doesn't support.";
 const NETWORK = "This station isn't responding right now. Try again or pick another station.";
 const TIMEOUT = 'This station took too long to respond.';
 
@@ -200,12 +201,30 @@ describe('player controller', () => {
     expect(player.getState().station?.id).toBe('a');
   });
 
-  it('shows the unsupported sentence for an unsupported stream error without retrying', () => {
+  it('retries an SRC_NOT_SUPPORTED error once like a network error, then shows the neutral message', async () => {
     player.play(station('a'));
     el().error = { code: 4 };
     el().emit('error');
-    expect(player.getState()).toMatchObject({ status: 'error', error: UNSUPPORTED });
-    expect(el().log.filter((l) => l === 'play')).toHaveLength(1);
+    expect(player.getState()).toMatchObject({ status: 'loading', error: null });
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(2);
+
+    el().emit('error');
+    expect(player.getState()).toMatchObject({ status: 'error', error: UNPLAYABLE });
+    expect(player.getState().error).not.toBe(UNSUPPORTED);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(2);
+  });
+
+  it('shows the neutral message for a play() NotSupportedError after its one retry', async () => {
+    player.play(station('a'));
+    el().rejectPlay('NotSupportedError');
+    await settle();
+    expect(status()).toBe('loading');
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().rejectPlay('NotSupportedError');
+    await settle();
+    expect(player.getState()).toMatchObject({ status: 'error', error: UNPLAYABLE });
   });
 
   it('retries a network error once after 1.5s, then stays in error', async () => {
@@ -342,9 +361,85 @@ describe('player controller', () => {
     el().emit('ended');
     expect(status()).toBe('loading');
     await vi.advanceTimersByTimeAsync(1_500);
-    el().emit('playing');
     el().emit('ended');
     expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
+  });
+
+  it('gives a long-running stream one retry per drop: a playing event resets the budget', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    el().emit('ended');
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().emit('playing');
+    el().emit('ended');
+    expect(status()).toBe('loading');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(3);
+    expect(status()).toBe('loading');
+  });
+
+  it('gives a fresh network retry after a successful playing event', async () => {
+    player.play(station('a'));
+    el().error = { code: 2 };
+    el().emit('error');
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().emit('playing');
+    el().emit('error');
+    expect(status()).toBe('loading');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(3);
+  });
+
+  it('shows buffering while stalled and returns to playing when data resumes', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    el().emit('waiting');
+    expect(status()).toBe('buffering');
+    await vi.advanceTimersByTimeAsync(5_000);
+    el().emit('playing');
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(status()).toBe('playing');
+    expect(player.getState().error).toBeNull();
+  });
+
+  it('runs the failure path when a buffering stall never recovers for 15s: one retry, then error', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    el().emit('stalled');
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(status()).toBe('buffering');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(status()).toBe('loading');
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(2);
+    el().error = { code: 2 };
+    el().emit('error');
+    expect(player.getState()).toMatchObject({ status: 'error', error: NETWORK });
+  });
+
+  it('gives a stall a fresh retry when the stream plays again before stalling', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    el().emit('waiting');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(1_500);
+    el().emit('playing');
+    el().emit('waiting');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(status()).toBe('loading');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(el().log.filter((l) => l === 'play')).toHaveLength(3);
+  });
+
+  it('cancels the stall timer on pause', async () => {
+    player.play(station('a'));
+    el().emit('playing');
+    el().emit('waiting');
+    player.pause();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(player.getState()).toMatchObject({ status: 'paused', error: null });
   });
 
   it('uses native HLS when the browser supports it', () => {
@@ -355,7 +450,7 @@ describe('player controller', () => {
     expect(status()).toBe('loading');
   });
 
-  it('reports an unsupported format when neither native HLS nor hls.js can play', async () => {
+  it('keeps the unsupported-format sentence for HLS when neither native nor hls.js support exists', async () => {
     const hls = station('h', { streamUrl: 'https://stream.example.test/h.m3u8', hls: true });
     player.play(hls);
     await vi.waitFor(() => expect(status()).toBe('error'));

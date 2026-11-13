@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readJSON, removeKey, storageAvailable, writeJSON } from './safeStorage';
+import { readJSON, storageAvailable, writeJSON } from './safeStorage';
 
 const KEY = 'signalsurf:test:v1';
 
@@ -45,20 +45,5 @@ describe('readJSON / writeJSON', () => {
       throw new DOMException('blocked', 'SecurityError');
     });
     expect(writeJSON(KEY, { a: 1 })).toBe(false);
-  });
-});
-
-describe('removeKey', () => {
-  it('removes a stored key', () => {
-    localStorage.setItem(KEY, '1');
-    removeKey(KEY);
-    expect(localStorage.getItem(KEY)).toBeNull();
-  });
-
-  it('does not throw when removeItem fails', () => {
-    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
-      throw new DOMException('blocked', 'SecurityError');
-    });
-    expect(() => removeKey(KEY)).not.toThrow();
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { player, usePlayer } from '@/audio/player';
-import { stationLocation } from '@/lib/format';
+import { externalHref, stationLocation } from '@/lib/format';
 import { favorites, useIsFavorite } from '@/storage/favorites';
 import { selectStation } from '@/state/ui';
 import type { PlayerStatus, Station } from '@/types';
@@ -141,6 +141,7 @@ export function PlayerBar() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
+  const homepage = externalHref(station?.homepage);
   return (
     <footer className="ss-player" aria-label="Player">
       <div className="ss-player__left">
@@ -190,10 +191,10 @@ export function PlayerBar() {
             onChange={(e) => player.setVolume(Number(e.currentTarget.value))}
           />
           <FavoriteButton station={station} />
-          {station?.homepage ? (
+          {homepage ? (
             <a
               className="ss-icon-btn ss-player__ext"
-              href={station.homepage}
+              href={homepage}
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Open station website"

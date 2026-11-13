@@ -1,6 +1,6 @@
 import { useStore } from '@/lib/createStore';
 import type { HistoryEntry, Station } from '@/types';
-import { createPersisted, isStationSnapshot } from './persisted';
+import { createPersisted, sanitizeStation } from './persisted';
 
 export const HISTORY_KEY = 'signalsurf:history:v1';
 export const HISTORY_LIMIT = 50;
@@ -12,8 +12,9 @@ function parseHistory(raw: unknown): HistoryEntry[] {
   const out: HistoryEntry[] = [];
   for (const item of raw) {
     if (typeof item !== 'object' || item === null) continue;
-    const { station, playedAt } = item as { station?: unknown; playedAt?: unknown };
-    if (!isStationSnapshot(station)) continue;
+    const { station: rawStation, playedAt } = item as { station?: unknown; playedAt?: unknown };
+    const station = sanitizeStation(rawStation);
+    if (station === null) continue;
     if (typeof playedAt !== 'number' || !Number.isFinite(playedAt)) continue;
     if (seen.has(station.id)) continue;
     seen.add(station.id);
