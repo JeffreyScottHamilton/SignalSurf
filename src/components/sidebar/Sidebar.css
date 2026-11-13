@@ -50,7 +50,7 @@
   }
 
   .ss-sidebar--expanded {
-    height: 62dvh;
+    height: 55dvh;
     gap: var(--ss-2);
     padding: 0 var(--ss-2) var(--ss-2);
   }

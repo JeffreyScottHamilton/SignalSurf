@@ -113,18 +113,18 @@
   background: var(--ss-accent);
 }
 
-/* Cluster disc: flat, neutral, with the count. */
+/* Cluster disc: flat, neutral, with the count. 20px, so dense regions read as a few small badges. */
 .ss-cluster {
   box-sizing: border-box;
-  width: 32px;
-  height: 32px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   background: var(--ss-elevated);
   color: var(--ss-text);
   border: 1px solid var(--ss-border);
   border-radius: 50%;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
   line-height: 1;
 }

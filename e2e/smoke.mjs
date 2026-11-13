@@ -1,8 +1,9 @@
 // End-to-end smoke test for SignalSurf. Plain Node, uses the preinstalled global Playwright.
 // Runs against `npm run preview` (started and stopped here) unless SS_BASE_URL is set.
 // Station data is real (Radio Browser). Only audio bytes are mocked: every `media` request
-// (and any non-API cross-origin audio URL) is answered with a 5-second silent WAV.
+// (and any non-API cross-origin audio URL) is redirected to a local silent stream server.
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -18,10 +19,14 @@ const API_HOST = /(^|\.)radio-browser\.info$/;
 
 class SkipStep extends Error {}
 
-/** Silent 16-bit mono 8 kHz WAV, 5 seconds. */
-function silentWav(seconds = 5, rate = 8000) {
-  const dataLen = seconds * rate * 2;
-  const buf = Buffer.alloc(44 + dataLen);
+const RATE = 8000;
+const CHUNK_MS = 100;
+// Like a real radio server: a preroll burst (about 60 s of silence) so the browser can start, then real time.
+const BURST_BYTES = 1_000_000;
+
+/** 16-bit mono 8 kHz WAV header. The declared data size is huge, so the stream never ends on its own. */
+function wavHeader(dataLen = 0x7f000000) {
+  const buf = Buffer.alloc(44);
   buf.write('RIFF', 0);
   buf.writeUInt32LE(36 + dataLen, 4);
   buf.write('WAVE', 8);
@@ -29,15 +34,52 @@ function silentWav(seconds = 5, rate = 8000) {
   buf.writeUInt32LE(16, 16);
   buf.writeUInt16LE(1, 20);
   buf.writeUInt16LE(1, 22);
-  buf.writeUInt32LE(rate, 24);
-  buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt32LE(RATE, 24);
+  buf.writeUInt32LE(RATE * 2, 28);
   buf.writeUInt16LE(2, 32);
   buf.writeUInt16LE(16, 34);
   buf.write('data', 36);
   buf.writeUInt32LE(dataLen, 40);
   return buf;
 }
-const WAV = silentWav();
+
+/**
+ * Local stand-in for a live stream: silent WAV written in real time, never ending.
+ * Counts connections that are still open, so the script can check how many streams are live.
+ */
+function startStreamServer() {
+  let open = 0;
+  const silence = Buffer.alloc((RATE * 2 * CHUNK_MS) / 1000);
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'audio/wav' });
+    res.write(wavHeader());
+    res.write(Buffer.alloc(BURST_BYTES));
+    open += 1;
+    let closed = false;
+    const timer = setInterval(() => res.write(silence), CHUNK_MS);
+    const done = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(timer);
+      open -= 1;
+    };
+    res.on('close', done);
+    req.on('close', done);
+    res.on('error', done);
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        url: `http://127.0.0.1:${port}/stream.wav`,
+        open: () => open,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function startPreview() {
   const child = spawn('npm', ['run', 'preview', '--', '--port', String(PORT), '--strictPort'], {
@@ -75,6 +117,7 @@ async function main() {
   const preview = process.env.SS_BASE_URL ? null : startPreview();
   const steps = [];
   let browser = null;
+  let stream = null;
   let exitCode = 0;
 
   const stopAll = async () => {
@@ -102,36 +145,26 @@ async function main() {
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(e.message));
 
-    // Media accounting: started vs finished/failed. Fulfilled routes finish at once, so this
-    // counts overlapping requests as they are issued.
-    const media = { started: 0, ended: 0, open: 0 };
-    page.on('request', (req) => {
-      if (req.resourceType() === 'media') {
-        media.started += 1;
-        media.open += 1;
-      }
-    });
-    const closeMedia = () => {
-      media.ended += 1;
-      media.open = Math.max(0, media.open - 1);
-    };
-    page.on('requestfinished', (req) => {
-      if (req.resourceType() === 'media') closeMedia();
-    });
-    page.on('requestfailed', (req) => {
-      if (req.resourceType() === 'media') closeMedia();
-    });
-
+    // Audio bytes come from the local stream server: media requests are redirected there.
+    stream = await startStreamServer();
     await page.route('**/*', (route) => {
       const req = route.request();
       const url = new URL(req.url());
       const isApi = API_HOST.test(url.hostname);
       const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
       if (req.resourceType() === 'media' || (!isApi && !isLocal && req.resourceType() === 'audio')) {
-        return route.fulfill({ status: 200, contentType: 'audio/wav', body: WAV, headers: { 'accept-ranges': 'none' } });
+        return route.fulfill({ status: 302, headers: { location: stream.url } });
       }
       return route.continue();
     });
+    const waitOpen = async (n, timeout = 3000) => {
+      const end = Date.now() + timeout;
+      while (Date.now() < end) {
+        if (stream.open() === n) return true;
+        await sleep(100);
+      }
+      return stream.open() === n;
+    };
 
     /** Runs one named step. A failed assertion stops the run; a SkipStep is reported and the run goes on. */
     async function step(id, title, fn) {
@@ -185,6 +218,12 @@ async function main() {
       await waitForRows(10, 30000);
       const n = await page.locator('.ss-list__scroll .ss-station-row').count();
       expect(n >= 10, `only ${n} rows`);
+      // Fresh load, nothing selected: the world view.
+      await page.waitForFunction(() => document.querySelectorAll('.leaflet-marker-icon').length >= 1, null, {
+        timeout: 30000,
+      });
+      await sleep(1500);
+      await page.screenshot({ path: join(SHOTS, '1440x900-world.png') });
       return `${n} rows`;
     });
 
@@ -273,7 +312,7 @@ async function main() {
       await page.screenshot({ path: join(SHOTS, '1440x900-explore-playing.png') });
       const row = page.locator('.ss-list__scroll .ss-station-row').nth(1);
       secondName = (await row.locator('.ss-station-row__name').textContent()).trim();
-      const startedBefore = media.started;
+      expect((await waitOpen(1)), `before switching, ${stream.open()} stream connections open (expected 1)`);
       await row.click();
       await page.waitForFunction(
         (n) => document.querySelector('footer.ss-player .ss-player__name')?.textContent?.trim() === n,
@@ -281,9 +320,10 @@ async function main() {
         { timeout: 5000 },
       );
       await waitMainLabel('Pause');
-      expect(media.started > startedBefore, 'no new media request after switching');
-      expect(media.open <= 1, `${media.open} media requests open`);
-      return `"${secondName}"; media started ${media.started}, open ${media.open}`;
+      expect(await waitOpen(1), `after switching, ${stream.open()} stream connections open within 3s (expected 1)`);
+      await sleep(500);
+      expect(stream.open() === 1, `${stream.open()} stream connections open after 500ms (expected 1)`);
+      return `"${secondName}"; exactly 1 stream connection open`;
     });
 
     // f. Main button pauses.
@@ -291,7 +331,8 @@ async function main() {
       await page.locator('footer.ss-player .ss-player__main').click();
       await waitMainLabel('Play');
       expect((await mainLabel()) === 'Play', 'label is not Play');
-      return '';
+      expect(await waitOpen(0), `${stream.open()} stream connections still open after pausing`);
+      return 'stream closed';
     });
 
     // g. Favourite from the player bar; listed in Favorites; survives reload; removable.
@@ -354,15 +395,29 @@ async function main() {
         await page.waitForTimeout(400);
       }
       await page.waitForTimeout(600);
-      const single = page.locator('.leaflet-marker-pane [role="button"][aria-label]:not(.marker-cluster)');
-      const singles = await single.count();
-      if (singles === 0) {
-        return `${count} markers/clusters; no single marker visible at this zoom`;
+      // Single markers that are on screen inside the map and not covered by another element.
+      const visible = await page.evaluate(() => {
+        const c = document.querySelector('.ss-map__canvas')?.getBoundingClientRect();
+        if (!c) return [];
+        return [...document.querySelectorAll('.leaflet-marker-pane .leaflet-marker-icon[aria-label]')]
+          .map((e) => {
+            const r = e.getBoundingClientRect();
+            const cx = r.left + r.width / 2;
+            const cy = r.top + r.height / 2;
+            const inside = cx > c.left + 20 && cx < c.right - 20 && cy > c.top + 20 && cy < c.bottom - 80;
+            const hit = document.elementFromPoint(cx, cy);
+            return { label: e.getAttribute('aria-label'), cx, cy, inside, clear: hit !== null && e.contains(hit) };
+          })
+          .filter((m) => m.inside && m.clear);
+      });
+      if (visible.length === 0) {
+        const total = await page.locator('.leaflet-marker-pane .leaflet-marker-icon[aria-label]').count();
+        return `${count} markers/clusters; no single marker on screen at this zoom (${total} single markers off screen)`;
       }
-      const target = single.first();
-      const label = await target.getAttribute('aria-label');
-      await target.click({ timeout: 5000 });
+      const target = visible[0];
+      await page.mouse.click(target.cx, target.cy);
       await page.waitForSelector('.ss-map-card__play', { timeout: 5000 });
+      const label = target.label;
       const popupName = (await page.locator('.ss-map-card__name').textContent()).trim();
       expect(popupName === label, `popup "${popupName}" != marker "${label}"`);
       return `${count} markers/clusters; popup "${popupName}" with Play`;
@@ -412,6 +467,7 @@ async function main() {
     console.error(`e2e failed: ${err.message}`);
   } finally {
     await stopAll();
+    if (stream) await stream.close().catch(() => {});
   }
 
   const passed = steps.filter((s) => s.status === 'PASS').length;

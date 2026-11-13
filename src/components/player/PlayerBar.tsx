@@ -54,7 +54,10 @@ function Info({ station, status, error }: { station: Station | null; status: Pla
       <div className="ss-player__info">
         <span className="ss-player__logo-slot" aria-hidden="true" />
         <span className="ss-player__text">
-          <span className="ss-player__empty">Select a station to start listening</span>
+          <span className="ss-player__empty">
+            <span className="ss-player__empty-long">Select a station to start listening</span>
+            <span className="ss-player__empty-short">Select a station</span>
+          </span>
           <span className="ss-player__status" role="status" aria-live="polite" />
         </span>
       </div>

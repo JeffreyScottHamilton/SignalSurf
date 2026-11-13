@@ -30,7 +30,9 @@ const PROGRESS_MIN_ZOOM = 5;
 const FOCUS_ZOOM = 6;
 const LOAD_DEBOUNCE_MS = 600;
 const MAX_RADIUS_KM = 600;
-const START_CENTER: [number, number] = [25, 0];
+const START_CENTER: [number, number] = [20, 10];
+const NARROW_PANEL_PX = 768;
+const NARROW_EXTRA_ZOOM = 0.5;
 const SELECTED_Z_OFFSET = 1000;
 
 interface Entry {
@@ -38,10 +40,16 @@ interface Entry {
   marker: L.Marker;
 }
 
-/** Smallest zoom at which the world (360 degrees) is at least as wide as the panel. Quarter-step ceiling. */
+/** Smallest zoom at which the whole 360 degrees of longitude fill the panel width (hundredth-step ceiling). */
 function minZoomFor(width: number): number {
   if (!(width > 0)) return 0;
-  return Math.max(0, Math.ceil(Math.log2(width / 256) * 4) / 4);
+  return Math.max(0, Math.ceil(Math.log2(width / 256) * 100) / 100);
+}
+
+/** Initial zoom: the world fits the width; a narrow (phone) panel starts one notch closer so land is readable. */
+function startZoomFor(width: number): number {
+  const min = minZoomFor(width);
+  return width > 0 && width < NARROW_PANEL_PX ? min + NARROW_EXTRA_ZOOM : min;
 }
 
 function prefersReducedMotion(): boolean {
@@ -56,8 +64,8 @@ function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   return L.divIcon({
     className: 'ss-cluster-icon',
     html: `<div class="ss-cluster"><span>${cluster.getChildCount()}</span></div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
   });
 }
 
@@ -72,14 +80,15 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     maxBoundsViscosity: 1,
     minZoom: minZoomFor(el.clientWidth),
     maxZoom: MAX_ZOOM,
-    zoomSnap: 0.25,
+    zoomSnap: 0.1,
+    zoomDelta: 0.5,
     preferCanvas: true,
     zoomControl: false,
     attributionControl: true,
   });
   map.attributionControl.setPrefix(false);
   map.attributionControl.addAttribution(ATTRIBUTION);
-  map.setView(START_CENTER, map.getMinZoom(), { animate: false });
+  map.setView(START_CENTER, startZoomFor(el.clientWidth), { animate: false });
 
   let disposed = false;
   let selectedId: string | null = null;
@@ -91,7 +100,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   const cluster = L.markerClusterGroup({
     chunkedLoading: true,
     showCoverageOnHover: false,
-    maxClusterRadius: 40,
+    maxClusterRadius: 22,
     spiderfyOnMaxZoom: true,
     iconCreateFunction: clusterIcon,
   });
@@ -271,6 +280,11 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
         map.invalidateSize();
         fitMinZoom();
         emitZoom();
+        // A resize can leave the open popup past the edge: pan it back inside.
+        if (openId !== null && popup.isOpen()) {
+          const ll = popup.getLatLng();
+          if (ll) map.panInside(ll, { paddingTopLeft: [125, 150], paddingBottomRight: [125, 40] });
+        }
       });
   ro?.observe(el);
 

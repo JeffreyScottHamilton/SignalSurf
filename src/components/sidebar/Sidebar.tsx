@@ -9,7 +9,7 @@ import './Sidebar.css';
 
 /**
  * Desktop: a bordered side panel. Mobile (<768px): a bottom sheet above the player,
- * collapsed to a bar (handle + search) or expanded to 62dvh.
+ * collapsed to a bar (handle + search) or expanded to 55dvh.
  */
 export function Sidebar() {
   const view = useStore(uiStore, (s) => s.view);

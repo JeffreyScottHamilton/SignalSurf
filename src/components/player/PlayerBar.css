@@ -96,6 +96,11 @@ footer.ss-player {
   font-size: 14px;
 }
 
+/* Desktop shows the full empty-state sentence; the phone bar shows the short one. */
+.ss-player__empty-short {
+  display: none;
+}
+
 .ss-player__location {
   color: var(--ss-muted);
   font-size: 13px;
@@ -277,6 +282,14 @@ footer.ss-player {
 
   .ss-player__location {
     display: none;
+  }
+
+  .ss-player__empty-long {
+    display: none;
+  }
+
+  .ss-player__empty-short {
+    display: inline;
   }
 
   .ss-player__right {

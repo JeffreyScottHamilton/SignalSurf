@@ -1,4 +1,5 @@
 .ss-logo {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -11,17 +12,25 @@
   border: 1px solid var(--ss-border);
 }
 
-.ss-logo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.ss-logo--initials {
+.ss-logo__initials {
   color: var(--ss-muted);
   font-size: calc(var(--ss-logo-size, 40px) * 0.36);
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1;
   user-select: none;
+}
+
+/* Favicon layered over the initials. Hidden until it has loaded. */
+.ss-logo__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  visibility: hidden;
+}
+
+.ss-logo__img--loaded {
+  visibility: visible;
 }
