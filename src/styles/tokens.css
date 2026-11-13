@@ -1,0 +1,34 @@
+:root {
+  /* Colour */
+  --ss-bg: #0B0F14;
+  --ss-surface: #11161C;
+  --ss-elevated: #161B22;
+  --ss-border: #2A323C;
+  --ss-text: #F9FAFB;
+  --ss-muted: #9CA3AF;
+  --ss-accent: #2563EB;
+  --ss-accent-hover: #1D4ED8;
+  --ss-accent-soft: rgba(37, 99, 235, 0.14);
+  --ss-accent-text: #60A5FA;
+  --ss-danger: #F87171;
+  --ss-map-ocean: #0B0F14;
+  --ss-map-land: #2A323C;
+  --ss-map-line: #11161C;
+
+  /* Spacing */
+  --ss-1: 4px;
+  --ss-2: 8px;
+  --ss-3: 12px;
+  --ss-4: 16px;
+  --ss-6: 24px;
+  --ss-8: 32px;
+
+  /* Radius */
+  --ss-r-sm: 6px;
+  --ss-r-md: 8px;
+  --ss-r-lg: 10px;
+  --ss-r-full: 999px;
+
+  /* Type */
+  --ss-font: "Inter Variable", Inter, system-ui, sans-serif;
+}

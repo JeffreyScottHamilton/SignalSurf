@@ -1,0 +1,57 @@
+/* Desktop shell grid (>=1024px). Mobile layout is owned by S2. */
+.ss-app {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-rows: 56px minmax(0, 1fr) 80px;
+  grid-template-areas:
+    'header header'
+    'sidebar map'
+    'player player';
+  gap: var(--ss-3);
+  box-sizing: border-box;
+  height: 100dvh;
+  padding: var(--ss-3);
+  background: var(--ss-bg);
+  overflow: hidden;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .ss-app {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+}
+
+.ss-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ss-surface);
+  border: 1px solid var(--ss-border);
+  border-radius: var(--ss-r-lg);
+}
+
+.ss-app__header {
+  grid-area: header;
+  min-width: 0;
+  border-bottom: 1px solid var(--ss-border);
+}
+
+.ss-app__sidebar {
+  grid-area: sidebar;
+}
+
+.ss-app__map {
+  grid-area: map;
+}
+
+.ss-app__player {
+  grid-area: player;
+}
+
+/* Region components fill their grid cell. */
+.ss-app__header > *,
+.ss-panel > * {
+  display: block;
+  height: 100%;
+  min-height: 0;
+}

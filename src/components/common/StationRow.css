@@ -1,0 +1,71 @@
+.ss-station-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ss-3);
+  width: 100%;
+  position: relative;
+  min-height: 60px;
+  padding: var(--ss-2) var(--ss-3);
+  border: 1px solid transparent;
+  border-radius: var(--ss-r-md);
+  background: transparent;
+  color: var(--ss-text);
+  text-align: left;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.ss-station-row:hover {
+  background: var(--ss-elevated);
+}
+
+/* 1px dividers between rows; the selected row keeps its accent frame. */
+.ss-station-row + .ss-station-row {
+  border-top-color: var(--ss-border);
+}
+
+.ss-station-row[aria-current='true'] {
+  border-color: var(--ss-accent);
+  background: var(--ss-accent-soft);
+  border-radius: var(--ss-r-md);
+}
+
+.ss-station-row__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ss-station-row__name {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-station-row__location {
+  overflow: hidden;
+  color: var(--ss-muted);
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-station-row__meta {
+  flex: 0 0 auto;
+  color: var(--ss-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ss-station-row__signal {
+  flex: 0 0 auto;
+  color: var(--ss-muted);
+}
+
+.ss-station-row__signal--playing {
+  color: var(--ss-accent);
+}
