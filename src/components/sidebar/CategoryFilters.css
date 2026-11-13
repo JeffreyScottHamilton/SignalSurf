@@ -1,0 +1,49 @@
+.ss-chips {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 4px;
+  height: 32px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.ss-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.ss-chip {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--ss-r-full);
+  background: var(--ss-elevated);
+  color: var(--ss-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.ss-chip:hover {
+  border-color: var(--ss-border);
+}
+
+.ss-chip[aria-pressed='true'] {
+  background: var(--ss-accent);
+  color: var(--ss-text);
+  border-color: var(--ss-accent);
+}
+
+@media (max-width: 767px) {
+  .ss-chip {
+    height: 36px;
+  }
+
+  .ss-chips {
+    height: 36px;
+  }
+}

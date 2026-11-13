@@ -1,25 +1,50 @@
-// STUB — replaced by slice S5
-import { createStore, useStore } from '@/lib/createStore';
+import { useStore } from '@/lib/createStore';
 import type { Station } from '@/types';
+import { createPersisted, isStationSnapshot } from './persisted';
 
-const store = createStore<Station[]>([]);
+export const FAVORITES_KEY = 'signalsurf:favorites:v1';
 
-export const favorites: {
+/** Newest first. Corrupt entries and duplicate ids are dropped. */
+function parseFavorites(raw: unknown): Station[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: Station[] = [];
+  for (const item of raw) {
+    if (!isStationSnapshot(item) || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
+const { store, commit } = createPersisted<Station[]>(FAVORITES_KEY, parseFavorites);
+
+export interface FavoritesApi {
   list(): Station[];
   has(id: string): boolean;
   toggle(s: Station): void;
   remove(id: string): void;
   clear(): void;
-} = {
+}
+
+export const favorites: FavoritesApi = {
   list: () => store.get(),
   has: (id) => store.get().some((s) => s.id === id),
   toggle(s) {
-    void s;
+    const current = store.get();
+    if (current.some((x) => x.id === s.id)) {
+      commit(current.filter((x) => x.id !== s.id));
+    } else {
+      commit([s, ...current]);
+    }
   },
   remove(id) {
-    void id;
+    const current = store.get();
+    if (current.some((x) => x.id === id)) commit(current.filter((x) => x.id !== id));
   },
-  clear() {},
+  clear() {
+    if (store.get().length > 0) commit([]);
+  },
 };
 
 export function useFavorites(): Station[] {

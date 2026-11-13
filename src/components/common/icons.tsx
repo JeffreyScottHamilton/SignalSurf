@@ -160,14 +160,23 @@ export function CloseIcon(props: IconProps) {
 }
 
 /** Signal bars, used as the default trailing mark on a station row. */
-export function SignalIcon(props: IconProps) {
+/** Four ascending solid bars. Filled, so it reads as signal strength at 18px. */
+export function SignalIcon({ className, size = 18 }: IconProps) {
   return (
-    <Svg {...props}>
-      <path d="M4 18v-2" />
-      <path d="M9 18v-5" />
-      <path d="M14 18V9" />
-      <path d="M19 18V5" />
-    </Svg>
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="2" y="15" width="4" height="7" rx="1.5" />
+      <rect x="8" y="11" width="4" height="11" rx="1.5" />
+      <rect x="14" y="7" width="4" height="15" rx="1.5" />
+      <rect x="20" y="3" width="4" height="19" rx="1.5" />
+    </svg>
   );
 }
 

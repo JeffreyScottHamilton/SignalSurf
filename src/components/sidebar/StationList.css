@@ -1,0 +1,120 @@
+.ss-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ss-list__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ss-list__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 1px dividers live on the <li> so they do not change the 60px row height. */
+.ss-list__item {
+  position: relative;
+}
+
+.ss-list__item + .ss-list__item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: var(--ss-3);
+  right: var(--ss-3);
+  height: 1px;
+  background: var(--ss-border);
+}
+
+.ss-list__item--selected::before,
+.ss-list__item--after-selected::before {
+  display: none;
+}
+
+/* Loading skeleton: same 60px footprint as a station row. */
+.ss-list__skeleton {
+  display: flex;
+  align-items: center;
+  gap: var(--ss-3);
+  box-sizing: border-box;
+  height: 60px;
+  padding: var(--ss-2) var(--ss-3);
+}
+
+.ss-list__skeleton-logo {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--ss-r-sm);
+  background: var(--ss-elevated);
+}
+
+.ss-list__skeleton-lines {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--ss-2);
+  min-width: 0;
+}
+
+.ss-list__skeleton-line {
+  display: block;
+  width: 45%;
+  height: 10px;
+  border-radius: var(--ss-r-sm);
+  background: var(--ss-elevated);
+}
+
+.ss-list__skeleton-line--long {
+  width: 70%;
+}
+
+.ss-list__state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ss-2);
+  padding: var(--ss-4) var(--ss-3);
+}
+
+.ss-list__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ss-list__note {
+  margin: 0;
+  color: var(--ss-muted);
+  font-size: 13px;
+}
+
+.ss-list__button {
+  min-height: 32px;
+  margin-top: var(--ss-1);
+  padding: 0 var(--ss-3);
+  border: 1px solid var(--ss-border);
+  border-radius: var(--ss-r-md);
+  background: var(--ss-elevated);
+  color: var(--ss-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ss-list__button:hover {
+  border-color: var(--ss-muted);
+}
+
+@media (max-width: 767px) {
+  .ss-list__button {
+    min-height: 44px;
+  }
+}

@@ -8,16 +8,19 @@ import './App.css';
 export function App() {
   return (
     <>
+      <a className="ss-skip-link" href="#stations">
+        Skip to stations
+      </a>
       <div className="ss-app">
         <div className="ss-app__header">
           <Header />
         </div>
-        <div className="ss-app__sidebar ss-panel">
+        <div className="ss-app__sidebar">
           <Sidebar />
         </div>
-        <div className="ss-app__map ss-panel">
+        <main className="ss-app__map ss-panel">
           <WorldMap />
-        </div>
+        </main>
         <div className="ss-app__player ss-panel">
           <PlayerBar />
         </div>

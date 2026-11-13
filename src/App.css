@@ -1,4 +1,4 @@
-/* Desktop shell grid (>=1024px). Mobile layout is owned by S2. */
+/* App shell. Desktop (>=1024px) is the default; tablet and mobile override below. */
 .ss-app {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
@@ -15,13 +15,30 @@
   overflow: hidden;
 }
 
+/* Tablet: narrower sidebar, same layout. */
 @media (min-width: 768px) and (max-width: 1023px) {
   .ss-app {
     grid-template-columns: 280px minmax(0, 1fr);
   }
 }
 
+/* Mobile (<768px): map on top, bottom sheet, compact player. Not a scaled-down desktop. */
+@media (max-width: 767px) {
+  .ss-app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto 64px;
+    grid-template-areas:
+      'header'
+      'map'
+      'sidebar'
+      'player';
+    gap: var(--ss-2);
+    padding: var(--ss-2);
+  }
+}
+
 .ss-panel {
+  box-sizing: border-box;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -33,25 +50,56 @@
 .ss-app__header {
   grid-area: header;
   min-width: 0;
-  border-bottom: 1px solid var(--ss-border);
+  min-height: 0;
 }
 
 .ss-app__sidebar {
   grid-area: sidebar;
+  min-width: 0;
+  min-height: 0;
 }
 
 .ss-app__map {
   grid-area: map;
+  display: block;
 }
 
 .ss-app__player {
   grid-area: player;
 }
 
-/* Region components fill their grid cell. */
-.ss-app__header > *,
-.ss-panel > * {
+/* Map region fills its panel. The player bar sizes itself (see PlayerBar.css). */
+.ss-app__map > * {
   display: block;
   height: 100%;
   min-height: 0;
 }
+
+/* Desktop cells are exact-height; mobile rows size to their content (see Header.css, Sidebar.css). */
+@media (min-width: 768px) {
+  .ss-app__sidebar > *,
+  .ss-app__header > * {
+    height: 100%;
+  }
+}
+
+.ss-skip-link {
+  position: fixed;
+  top: var(--ss-2);
+  left: var(--ss-2);
+  z-index: 100;
+  padding: var(--ss-2) var(--ss-3);
+  border: 1px solid var(--ss-border);
+  border-radius: var(--ss-r-md);
+  background: var(--ss-elevated);
+  color: var(--ss-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.ss-skip-link:focus-visible {
+  transform: none;
+}
+

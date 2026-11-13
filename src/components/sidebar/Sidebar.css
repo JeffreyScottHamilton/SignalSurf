@@ -1,0 +1,91 @@
+/* Desktop and tablet: bordered side panel that fills its grid cell. */
+.ss-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ss-3);
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--ss-3);
+  overflow: hidden;
+  background: var(--ss-surface);
+  border: 1px solid var(--ss-border);
+  border-radius: var(--ss-r-lg);
+}
+
+.ss-sidebar__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--ss-3);
+  min-height: 0;
+}
+
+.ss-sidebar__view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ss-sidebar__view > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The sheet handle exists only on mobile. */
+.ss-sheet-handle {
+  display: none;
+}
+
+/* Mobile (<768px): bottom sheet. Collapsed = 56px bar (handle + search). */
+@media (max-width: 767px) {
+  .ss-sidebar {
+    flex: 0 0 auto;
+    height: 56px;
+    gap: 0;
+    padding: 0 var(--ss-2);
+    border-radius: var(--ss-r-lg);
+  }
+
+  .ss-sidebar--expanded {
+    height: 62dvh;
+    gap: var(--ss-2);
+    padding: 0 var(--ss-2) var(--ss-2);
+  }
+
+  .ss-sheet-handle {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 14px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .ss-sheet-handle__bar {
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: var(--ss-r-full);
+    background: var(--ss-muted);
+  }
+
+  .ss-sidebar:not(.ss-sidebar--expanded) .ss-sidebar__body {
+    display: none;
+  }
+
+  .ss-sidebar__body {
+    gap: var(--ss-2);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ss-sidebar {
+    transition: height 200ms ease;
+  }
+}
