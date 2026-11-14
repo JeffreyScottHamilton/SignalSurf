@@ -120,17 +120,17 @@ describe('mapStore', () => {
     expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
   });
 
-  it('caps the stations at 6000, dropping the oldest', async () => {
+  it('caps the stations at 8000, dropping the oldest', async () => {
     installFetch((url) => {
       const lat = Number(url.searchParams.get('geo_lat'));
       const batch = Array.from({ length: 200 }, (_, k) => geoRec(`${lat}-${k}`, 1, 1));
       return json(batch);
     });
-    for (let i = 0; i < 31; i++) md.loadNear({ lat: -60 + i * 4, lng: 0 }, 50);
-    await vi.waitFor(() => expect(md.mapStore.get().stations.length).toBe(6000));
+    for (let i = 0; i < 41; i++) md.loadNear({ lat: -80 + i * 4, lng: 0 }, 50);
+    await vi.waitFor(() => expect(md.mapStore.get().stations.length).toBe(8000));
     const ids = md.mapStore.get().stations.map((s) => s.id);
-    expect(ids.includes('-60-0')).toBe(false);
-    expect(ids.at(-1)).toBe('60-199');
+    expect(ids.includes('-80-0')).toBe(false);
+    expect(ids.at(-1)).toBe('80-199');
   });
 
   it('loadNear ignores failures silently', async () => {
@@ -145,29 +145,57 @@ describe('mapStore', () => {
 });
 
 describe('background map pages', () => {
-  it('loads pages 1 and 2 after page 0, merged by id and deduped', async () => {
+  it('loads pages 1 to 4 after page 0, merged by id and deduped', async () => {
     installFetch(
       pagesHandler({
         0: [geoRec('a', 1, 1), geoRec('b', 2, 2)],
         1000: [geoRec('b', 2, 2), geoRec('c', 3, 3)],
         2000: [geoRec('d', 4, 4), geoRec('c', 3, 3)],
+        3000: [geoRec('e', 5, 5), geoRec('d', 4, 4)],
+        4000: [geoRec('f', 6, 6)],
       }),
     );
     md.initMapData();
     await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
     const state = md.mapStore.get();
     expect(state.status).toBe('ready');
-    expect(state.stations.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd']);
-    expect(geoOffsets()).toEqual(['0', '1000', '2000']);
+    expect(state.stations.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
+  });
+
+  it('requests 5 pages in total, 1000 stations each, and no page after the last', async () => {
+    installFetch(
+      pagesHandler({
+        0: [geoRec('p0', 1, 1)],
+        1000: [geoRec('p1', 1, 1)],
+        2000: [geoRec('p2', 1, 1)],
+        3000: [geoRec('p3', 1, 1)],
+        4000: [geoRec('p4', 1, 1)],
+        5000: [geoRec('p5', 1, 1)],
+      }),
+    );
+    md.initMapData();
+    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
+    expect(md.mapStore.get().stations).toHaveLength(5);
   });
 
   it('starts each page through requestIdleCallback', async () => {
     const idle = vi.fn((cb: () => void) => setTimeout(cb, 0));
     vi.stubGlobal('requestIdleCallback', idle);
-    installFetch(pagesHandler({ 0: [geoRec('a', 1, 1)], 1000: [geoRec('b', 2, 2)], 2000: [geoRec('c', 3, 3)] }));
+    installFetch(
+      pagesHandler({
+        0: [geoRec('a', 1, 1)],
+        1000: [geoRec('b', 2, 2)],
+        2000: [geoRec('c', 3, 3)],
+        3000: [geoRec('d', 4, 4)],
+        4000: [geoRec('e', 5, 5)],
+      }),
+    );
     md.initMapData();
     await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    expect(idle).toHaveBeenCalledTimes(2);
+    expect(idle).toHaveBeenCalledTimes(4);
   });
 
   it('stops when a page adds no new stations', async () => {
@@ -225,7 +253,15 @@ describe('background map pages', () => {
   });
 
   it('initMapData called again loads each page once', async () => {
-    installFetch(pagesHandler({ 0: [geoRec('a', 1, 1)], 1000: [geoRec('b', 2, 2)], 2000: [geoRec('c', 3, 3)] }));
+    installFetch(
+      pagesHandler({
+        0: [geoRec('a', 1, 1)],
+        1000: [geoRec('b', 2, 2)],
+        2000: [geoRec('c', 3, 3)],
+        3000: [geoRec('d', 4, 4)],
+        4000: [geoRec('e', 5, 5)],
+      }),
+    );
     md.initMapData();
     md.initMapData();
     await vi.waitFor(() => expect(md.mapStore.get().status).toBe('ready'));
@@ -233,15 +269,23 @@ describe('background map pages', () => {
     await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
     md.initMapData();
     await new Promise((r) => setTimeout(r, 0));
-    expect(geoOffsets()).toEqual(['0', '1000', '2000']);
-    expect(md.mapStore.get().stations.map((s) => s.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
+    expect(md.mapStore.get().stations.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 
   it('waits for the 1500 ms fallback timer before each page when requestIdleCallback is missing', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       vi.stubGlobal('requestIdleCallback', undefined);
-      installFetch(pagesHandler({ 0: [geoRec('a', 1, 1)], 1000: [geoRec('b', 2, 2)], 2000: [geoRec('c', 3, 3)] }));
+      installFetch(
+        pagesHandler({
+          0: [geoRec('a', 1, 1)],
+          1000: [geoRec('b', 2, 2)],
+          2000: [geoRec('c', 3, 3)],
+          3000: [geoRec('d', 4, 4)],
+          4000: [geoRec('e', 5, 5)],
+        }),
+      );
       md.initMapData();
       await settle(() => md.mapStore.get().status === 'ready');
       expect(geoOffsets()).toEqual(['0']);
@@ -250,9 +294,12 @@ describe('background map pages', () => {
       await vi.advanceTimersByTimeAsync(1);
       await settle(() => geoOffsets().length === 2);
       expect(geoOffsets()).toEqual(['0', '1000']);
-      await vi.advanceTimersByTimeAsync(1500);
+      for (let page = 2; page <= 4; page++) {
+        await vi.advanceTimersByTimeAsync(1500);
+        await settle(() => geoOffsets().length === page + 1);
+      }
       await settle(() => md.mapStore.get().backgroundStatus === 'done');
-      expect(geoOffsets()).toEqual(['0', '1000', '2000']);
+      expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
     } finally {
       vi.useRealTimers();
     }

@@ -14,9 +14,10 @@ export interface MapDataState {
   backgroundStatus: BackgroundStatus;
 }
 
-const CAP = 6000;
-/** Map pages loaded after page 0, one at a time: 1000 + 2000 more stations in the background. */
-const BACKGROUND_PAGES: readonly number[] = [1, 2];
+const CAP = 8000;
+/** Pages loaded in the background after page 0 (1000 stations each), so 5 pages (5000 stations) in total. */
+const BACKGROUND_PAGE_COUNT = 4;
+const BACKGROUND_PAGES: readonly number[] = Array.from({ length: BACKGROUND_PAGE_COUNT }, (_, i) => i + 1);
 /** Start delay when requestIdleCallback is missing, and the idle deadline when it is present. */
 const IDLE_FALLBACK_MS = 1500;
 
