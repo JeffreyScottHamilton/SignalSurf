@@ -1,394 +1,182 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Explore = typeof import('./explore');
+type Catalog = typeof import('@/catalog/catalog');
 
-const DISCOVERY_HOST = 'all.api.radio-browser.info';
-const DE1 = 'de1.api.radio-browser.info';
-const ERROR = "Couldn't reach the station directory. Check your connection and try again.";
-
-let ex: Explore;
-let calls: URL[];
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
-}
-
-function rec(id: string, name = `Station ${id}`): Record<string, unknown> {
+function rec(i: number, extra: Record<string, unknown> = {}) {
+  const id = `station-${String(i).padStart(4, '0')}`;
   return {
-    stationuuid: id,
-    name,
-    url_resolved: `https://stream.test/${id}`,
-    url: `https://stream.test/${id}`,
-    tags: '',
-    country: 'Germany',
-    countrycode: 'DE',
-    state: '',
-    clickcount: 1,
-    votes: 0,
-    lastcheckok: 1,
+    id,
+    name: `Station ${i}`,
+    streamUrl: `https://stream.test/${id}`,
+    homepage: null,
+    favicon: null,
+    stateCode: 'TX',
+    city: null,
+    tags: ['jazz'],
+    genres: ['jazz'],
+    codec: null,
+    bitrate: null,
+    hls: false,
+    clickCount: 1000 - i,
+    ...extra,
   };
 }
 
-type Handler = (url: URL) => Response | Promise<Response>;
+let ex: Explore;
+let cat: Catalog;
+let fetchMock: ReturnType<typeof vi.fn>;
 
-function installFetch(handler: Handler): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: string | URL | Request) => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-      calls.push(url);
-      if (url.hostname === DISCOVERY_HOST) return json([{ ip: '10.0.0.1', name: DE1 }]);
-      return handler(url);
-    }),
-  );
-}
-
-function searchCalls(): URL[] {
-  return calls.filter((u) => u.pathname === '/json/stations/search');
-}
-
-/** Lets pending promises and fake-timer callbacks run. */
-async function settle(ms = 0): Promise<void> {
-  await vi.advanceTimersByTimeAsync(ms);
-  for (let i = 0; i < 50; i++) await Promise.resolve();
+async function loadWith(stations: unknown[]): Promise<void> {
+  fetchMock = vi.fn(async () => new Response(JSON.stringify({ stations })));
+  vi.stubGlobal('fetch', fetchMock);
+  ex.initExplore();
+  await vi.waitFor(() => expect(cat.catalogStore.get().status).toBe('ready'));
 }
 
 beforeEach(async () => {
-  calls = [];
-  vi.useFakeTimers();
+  localStorage.clear();
   vi.resetModules();
-  ex = await import('./explore');
+  ex = await import('@/state/explore');
+  cat = await import('@/catalog/catalog');
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
-describe('explore store', () => {
-  it('starts idle with an empty query and the all category', () => {
+describe('explore loading', () => {
+  it('loads the catalogue on first use and lists every match, most popular first', async () => {
+    await loadWith([rec(1), rec(2, { clickCount: 5000, stateCode: 'NY' }), rec(3, { genres: [] })]);
     const s = ex.exploreStore.get();
-    expect(s).toMatchObject({ query: '', category: 'all', results: [], status: 'idle', error: null });
+    expect(s.status).toBe('ready');
+    expect(s.results.map((x) => x.id)).toEqual(['station-0002', 'station-0001', 'station-0003']);
   });
 
-  it('debounces setQuery by 350 ms and trims the query', async () => {
-    installFetch(() => json([rec('a')]));
-    ex.setQuery('  jazz  ');
-    await settle(349);
-    expect(searchCalls()).toHaveLength(0);
-    await settle(1);
-    expect(ex.exploreStore.get().query).toBe('jazz');
-    expect(searchCalls().some((u) => u.searchParams.get('name') === 'jazz')).toBe(true);
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ status: 'ready' });
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['a']);
+  it('calls the network only for the catalogue file', async () => {
+    await loadWith([rec(1)]);
+    ex.setGenre('jazz');
+    ex.setGenre('all');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('only the last query in a burst is searched', async () => {
-    installFetch(() => json([]));
-    ex.setQuery('j');
-    await settle(200);
-    ex.setQuery('ja');
-    await settle(200);
-    ex.setQuery('jaz');
-    await settle(350);
-    const names = searchCalls().map((u) => u.searchParams.get('name'));
-    expect(names).toContain('jaz');
-    expect(names).not.toContain('j');
-    expect(names).not.toContain('ja');
-  });
-
-  it('ignores a late response from an aborted request', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => {
-      release = r;
-    });
-    installFetch(async (url) => {
-      const name = url.searchParams.get('name');
-      if (name === 'slow') await gate;
-      if (name === 'slow') return json([rec('slow1')]);
-      if (name === 'fast') return json([rec('fast1')]);
-      return json([]);
-    });
-
-    ex.setQuery('slow');
-    await settle(350);
-    ex.setQuery('fast');
-    await settle(350);
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ query: 'fast', status: 'ready' });
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['fast1']);
-
-    release();
-    await settle();
-    expect(ex.exploreStore.get().query).toBe('fast');
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['fast1']);
-  });
-
-  it('sets an error state with a user-facing sentence, and retry recovers', async () => {
-    installFetch(() => {
-      throw new TypeError('fetch failed');
-    });
+  it('mirrors a catalogue error, and retry loads it', async () => {
+    fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(
+      new Response(JSON.stringify({ stations: [rec(1)] })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
     ex.initExplore();
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ status: 'error', error: ERROR, results: [] });
-
-    installFetch(() => json([rec('a')]));
+    await vi.waitFor(() => expect(ex.exploreStore.get().status).toBe('error'));
+    expect(ex.exploreStore.get().error).toBe(cat.CATALOG_ERROR);
+    expect(ex.exploreStore.get().results).toEqual([]);
     ex.retryExplore();
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ status: 'ready', error: null });
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['a']);
-  });
-
-  it('setCategory is immediate and sends the tag hint', async () => {
-    installFetch(() => json([]));
-    ex.setCategory('news');
-    expect(ex.exploreStore.get().category).toBe('news');
-    await settle();
-    expect(searchCalls().length).toBeGreaterThan(0);
-    expect(searchCalls()[0].searchParams.get('tag')).toBe('news');
-  });
-
-  it('setCategory applies a query still waiting for its debounce, with one search', async () => {
-    installFetch(() => json([]));
-    ex.setQuery('jazz');
-    ex.setCategory('music');
-    await settle();
-    expect(ex.exploreStore.get().query).toBe('jazz');
-    const before = searchCalls().length;
-    await settle(1000);
-    expect(searchCalls().length).toBe(before);
-    expect(before).toBe(2); // name + state; "jazz" is not a country
-  });
-
-  it('resetExplore clears the query and category and reloads popular stations', async () => {
-    installFetch(() => json([]));
-    ex.setCategory('sports');
-    ex.setQuery('abc');
-    await settle(400);
-    calls = [];
-    ex.resetExplore();
-    expect(ex.exploreStore.get()).toMatchObject({ query: '', category: 'all' });
-    await settle();
-    expect(searchCalls()).toHaveLength(1);
-    expect(searchCalls()[0].searchParams.get('name')).toBeNull();
-    expect(searchCalls()[0].searchParams.get('tag')).toBeNull();
-  });
-
-  it('initExplore loads once', async () => {
-    installFetch(() => json([rec('a')]));
-    ex.initExplore();
-    ex.initExplore();
-    await settle();
-    expect(searchCalls()).toHaveLength(1);
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['a']);
+    await vi.waitFor(() => expect(ex.exploreStore.get().status).toBe('ready'));
+    expect(ex.exploreStore.get().results).toHaveLength(1);
   });
 });
 
-describe('load more', () => {
-  /** Pages of 150 raw rows by offset; ids are `${prefix}${offset + i}`. */
-  function pageHandler(total: number, prefix = 's', hasNonsenseName = false) {
-    return (url: URL) => {
-      const offset = Number(url.searchParams.get('offset') ?? '0');
-      const n = Math.max(0, Math.min(150, total - offset));
-      void hasNonsenseName;
-      return json(Array.from({ length: n }, (_, i) => rec(`${prefix}${offset + i}`)));
-    };
-  }
-
-  function offsets(): string[] {
-    return searchCalls().map((u) => u.searchParams.get('offset') ?? '');
-  }
-
-  it('starts with hasMore false, loadingMore false and no load error', () => {
-    expect(ex.exploreStore.get()).toMatchObject({ hasMore: false, loadingMore: false, loadMoreError: null });
+describe('explore query and genre', () => {
+  it('debounces the query by 150 ms and trims it', async () => {
+    await loadWith([rec(1, { name: 'Alpha FM' }), rec(2, { name: 'Beta FM' })]);
+    vi.useFakeTimers();
+    ex.setQuery('  alpha  ');
+    expect(ex.exploreStore.get().query).toBe('');
+    vi.advanceTimersByTime(149);
+    expect(ex.exploreStore.get().results).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(ex.exploreStore.get().query).toBe('alpha');
+    expect(ex.exploreStore.get().results.map((s) => s.name)).toEqual(['Alpha FM']);
   });
 
-  it('appends the next page at offset = pages loaded x 150', async () => {
-    installFetch(pageHandler(300));
-    ex.initExplore();
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ status: 'ready', hasMore: true });
-    expect(ex.exploreStore.get().results).toHaveLength(150);
+  it('applies only the last query typed within the debounce window', async () => {
+    await loadWith([rec(1, { name: 'Alpha FM' }), rec(2, { name: 'Beta FM' })]);
+    vi.useFakeTimers();
+    ex.setQuery('a');
+    vi.advanceTimersByTime(100);
+    ex.setQuery('beta');
+    vi.advanceTimersByTime(100);
+    expect(ex.exploreStore.get().query).toBe('');
+    vi.advanceTimersByTime(60);
+    expect(ex.exploreStore.get().query).toBe('beta');
+  });
 
-    ex.loadMore();
-    await settle();
+  it('applies a genre change at once and flushes a pending query with it', async () => {
+    await loadWith([rec(1, { name: 'Alpha FM' }), rec(2, { name: 'Beta FM', genres: ['rock'] })]);
+    vi.useFakeTimers();
+    ex.setQuery('beta');
+    ex.setGenre('rock');
     const s = ex.exploreStore.get();
-    expect(s.results).toHaveLength(300);
-    expect(s.results[0].id).toBe('s0');
-    expect(s.results[299].id).toBe('s299');
-    expect(s.hasMore).toBe(true);
-    expect(s.loadingMore).toBe(false);
-    expect(offsets()).toEqual(['0', '150']);
-
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ hasMore: false, addedLastPage: 0 });
-    expect(ex.exploreStore.get().results).toHaveLength(300);
-    expect(offsets()).toEqual(['0', '150', '300']);
+    expect(s.genre).toBe('rock');
+    expect(s.query).toBe('beta');
+    expect(s.results.map((x) => x.id)).toEqual(['station-0002']);
+    vi.advanceTimersByTime(500);
+    expect(ex.exploreStore.get().query).toBe('beta');
   });
 
-  it('de-duplicates appended stations by id and by stream URL', async () => {
-    installFetch((url) => {
-      const offset = url.searchParams.get('offset');
-      if (offset === '0') return json([rec('a'), rec('b')]);
-      return json([rec('a'), rec('c'), { ...rec('d'), url_resolved: 'https://stream.test/b', url: 'https://stream.test/b' }]);
-    });
-    ex.initExplore();
-    await settle();
-    // Force hasMore on the short first page so loadMore is allowed.
-    ex.exploreStore.set((prev) => ({ ...prev, hasMore: true }));
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+  it('reports no results for a query that matches nothing', async () => {
+    await loadWith([rec(1)]);
+    ex.setGenre('all');
+    vi.useFakeTimers();
+    ex.setQuery('zzz');
+    vi.advanceTimersByTime(150);
+    expect(ex.exploreStore.get().results).toEqual([]);
+    expect(ex.exploreStore.get().hasMore).toBe(false);
   });
+});
 
-  it('does nothing unless the status is ready and hasMore is true', async () => {
-    installFetch(pageHandler(10));
+describe('explore paging (local)', () => {
+  it('shows 150 at a time and reveals the next 150 without a request', async () => {
+    const many = Array.from({ length: 400 }, (_, i) => rec(i + 1));
+    await loadWith(many);
+    expect(ex.exploreStore.get().results).toHaveLength(400);
+    expect(ex.exploreStore.get().visibleCount).toBe(150);
+    expect(ex.exploreStore.get().hasMore).toBe(true);
+
     ex.loadMore();
-    await settle();
-    expect(searchCalls()).toHaveLength(0);
-    ex.initExplore();
-    await settle();
+    expect(ex.exploreStore.get().visibleCount).toBe(300);
+    expect(ex.exploreStore.get().hasMore).toBe(true);
+
+    ex.loadMore();
+    ex.loadMore();
+    expect(ex.exploreStore.get().visibleCount).toBe(400);
     expect(ex.exploreStore.get().hasMore).toBe(false);
     ex.loadMore();
-    await settle();
-    expect(searchCalls()).toHaveLength(1);
+    expect(ex.exploreStore.get().visibleCount).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('never requests twice while a page is loading', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => {
-      release = r;
-    });
-    installFetch(async (url) => {
-      if (url.searchParams.get('offset') === '150') await gate;
-      return pageHandler(300)(url);
-    });
-    ex.initExplore();
-    await settle();
+  it('starts from the first page again when the query changes', async () => {
+    await loadWith(Array.from({ length: 300 }, (_, i) => rec(i + 1)));
     ex.loadMore();
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get().loadingMore).toBe(true);
-    expect(offsets().filter((o) => o === '150')).toHaveLength(1);
-    release();
-    await settle();
-    expect(ex.exploreStore.get().loadingMore).toBe(false);
-    expect(ex.exploreStore.get().results).toHaveLength(300);
+    expect(ex.exploreStore.get().visibleCount).toBe(300);
+    vi.useFakeTimers();
+    ex.setQuery('station 1');
+    vi.advanceTimersByTime(150);
+    expect(ex.exploreStore.get().visibleCount).toBe(150);
   });
 
-  it('a page that adds nothing new but has more keeps the button available without looping', async () => {
-    installFetch((url) => {
-      const offset = url.searchParams.get('offset');
-      if (offset === '0') return json(Array.from({ length: 150 }, (_, i) => rec(`s${i}`)));
-      // Full raw page, but every row is already listed.
-      return json(Array.from({ length: 150 }, (_, i) => rec(`s${i}`)));
-    });
-    ex.initExplore();
-    await settle();
-    ex.loadMore();
-    await settle();
-    const s = ex.exploreStore.get();
-    expect(s.results).toHaveLength(150);
-    expect(s.hasMore).toBe(true);
-    expect(searchCalls()).toHaveLength(2);
-    ex.loadMore();
-    await settle();
-    expect(offsets()).toEqual(['0', '150', '300']);
+  it('has no more pages when the matches fit one page', async () => {
+    await loadWith([rec(1), rec(2)]);
+    expect(ex.exploreStore.get().hasMore).toBe(false);
   });
+});
 
-  it('resets paging when the query changes, and a new search starts from offset 0', async () => {
-    installFetch(pageHandler(300));
-    ex.initExplore();
-    await settle();
+describe('explore reset', () => {
+  it('clears the query and genre and returns to the first page', async () => {
+    await loadWith(Array.from({ length: 200 }, (_, i) => rec(i + 1, { genres: i % 2 ? ['jazz'] : ['rock'] })));
+    ex.setGenre('rock');
     ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get().results).toHaveLength(300);
-
-    installFetch(pageHandler(300, 'q'));
-    ex.setQuery('zz');
-    await settle(400);
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ query: 'zz', hasMore: true, loadingMore: false, loadMoreError: null });
-    expect(ex.exploreStore.get().results).toHaveLength(150);
-    calls = [];
-    ex.loadMore();
-    await settle();
-    expect(offsets().every((o) => o === '150')).toBe(true);
-    expect(ex.exploreStore.get().results[150].id).toBe('q150');
-  });
-
-  it('a stale load-more from an older query never appends to the new results', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => {
-      release = r;
-    });
-    installFetch(async (url) => {
-      if (url.searchParams.get('offset') === '150') await gate;
-      return pageHandler(300)(url);
-    });
-    ex.initExplore();
-    await settle();
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get().loadingMore).toBe(true);
-
-    installFetch(() => json([rec('fresh')]));
+    vi.useFakeTimers();
+    ex.setQuery('station');
     ex.resetExplore();
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ loadingMore: false, hasMore: false, loadMoreError: null });
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['fresh']);
-
-    release();
-    await settle();
-    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['fresh']);
-    expect(ex.exploreStore.get().loadingMore).toBe(false);
-  });
-
-  it('a failed load-more sets the message, keeps the list, and leaves more available', async () => {
-    installFetch((url) => {
-      if (url.searchParams.get('offset') === '150') throw new TypeError('fetch failed');
-      return pageHandler(300)(url);
-    });
-    ex.initExplore();
-    await settle();
-    ex.loadMore();
-    await settle();
+    vi.advanceTimersByTime(500);
     const s = ex.exploreStore.get();
-    expect(s.loadMoreError).toBe("Couldn't load more stations. Try again.");
-    expect(s.loadingMore).toBe(false);
-    expect(s.status).toBe('ready');
-    expect(s.error).toBeNull();
-    expect(s.results).toHaveLength(150);
-    expect(s.hasMore).toBe(true);
-  });
-
-  it('retrying load-more after a failure clears the error and appends', async () => {
-    let fail = true;
-    installFetch((url) => {
-      if (url.searchParams.get('offset') === '150' && fail) throw new TypeError('fetch failed');
-      return pageHandler(300)(url);
-    });
-    ex.initExplore();
-    await settle();
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get().loadMoreError).not.toBeNull();
-    fail = false;
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get()).toMatchObject({ loadMoreError: null });
-    expect(ex.exploreStore.get().results).toHaveLength(300);
-  });
-
-  it('reports how many stations the last load added', async () => {
-    installFetch(pageHandler(200));
-    ex.initExplore();
-    await settle();
-    ex.loadMore();
-    await settle();
-    expect(ex.exploreStore.get().addedLastPage).toBe(50);
+    expect(s.query).toBe('');
+    expect(s.genre).toBe('all');
+    expect(s.results).toHaveLength(200);
+    expect(s.visibleCount).toBe(150);
   });
 });

@@ -2,7 +2,6 @@ import L from 'leaflet';
 import './globalLeaflet';
 import 'leaflet.markercluster';
 import { createRoot, type Root } from 'react-dom/client';
-import { loadNear } from '@/state/mapData';
 import { selectStation } from '@/state/ui';
 import type { Station } from '@/types';
 import { loadLandFeatures } from './landData';
@@ -26,12 +25,9 @@ export interface MapController {
 const ATTRIBUTION = 'Stations: Radio Browser · Map: Natural Earth';
 const WORLD_BOUNDS = L.latLngBounds([-75, -185], [85, 185]);
 const MAX_ZOOM = 8;
-// Nearby stations load from this zoom on. Below it the map shows only the popular world-wide starting set.
-const NEAR_MIN_ZOOM = 3;
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
 const FOCUS_MIN_ZOOM = 5;
 const FOCUS_MAX_ZOOM = 6;
-const LOAD_DEBOUNCE_MS = 600;
 const START_CENTER: [number, number] = [20, 10];
 const NARROW_PANEL_PX = 768;
 const NARROW_EXTRA_ZOOM = 0.5;
@@ -91,10 +87,6 @@ function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 // Clusters are not tab stops: the map container is the single tab stop.
 L.MarkerCluster.mergeOptions({ keyboard: false });
 
-function wrapLng(lng: number): number {
-  return ((((lng + 180) % 360) + 360) % 360) - 180;
-}
-
 export function createMapController(el: HTMLElement, opts: MapControllerOptions): MapController {
   const map = L.map(el, {
     worldCopyJump: false,
@@ -116,7 +108,6 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   let selectedId: string | null = null;
   let openId: string | null = null;
   let openRoot: Root | null = null;
-  let loadTimer: ReturnType<typeof setTimeout> | undefined;
   // At most one reveal is pending: the latest selection wins.
   let pendingReveal: (() => void) | null = null;
   // The blue selected dot is its own marker on the map, outside the cluster group, so it is never hidden.
@@ -302,20 +293,6 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
   map.on('zoomend', emitZoom);
 
-  /** After the map rests: asks for the most popular stations around the centre. */
-  function scheduleLoad() {
-    clearTimeout(loadTimer);
-    if (map.getZoom() < NEAR_MIN_ZOOM) return;
-    loadTimer = setTimeout(() => {
-      if (disposed || map.getZoom() < NEAR_MIN_ZOOM) return;
-      const c = map.getCenter();
-      // Centre to corner: half the visible diagonal. mapData rounds it to a radius bucket, at most 2500 km.
-      const km = Math.max(1, Math.ceil(map.distance(c, map.getBounds().getNorthEast()) / 1000));
-      loadNear({ lat: Math.max(-85, Math.min(85, c.lat)), lng: wrapLng(c.lng) }, km);
-    }, LOAD_DEBOUNCE_MS);
-  }
-  map.on('moveend', scheduleLoad);
-
   /** Rebuilds the cluster grids from the current minimum zoom and re-adds every marker. */
   function rebuildClusters() {
     clusterFloor = Math.floor(map.getMinZoom());
@@ -379,7 +356,6 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
-      clearTimeout(loadTimer);
       ro?.disconnect();
       el.removeEventListener('keydown', onKeyDown);
       disposeOpen();

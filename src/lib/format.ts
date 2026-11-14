@@ -1,3 +1,4 @@
+import { stateName } from '@/catalog/genres';
 import type { Station } from '@/types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -7,12 +8,16 @@ function startOfDay(ms: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-/** "Region, Country" with missing parts omitted. Never guesses. */
+/**
+ * "City, ST" when both are known, the state's full name, the city alone, or "United States" when no state
+ * is known. Never guesses a state or city.
+ */
 export function stationLocation(s: Station): string {
-  const parts = [s.region, s.country]
-    .map((p: unknown) => (typeof p === 'string' ? p.trim() : ''))
-    .filter((p) => p.length > 0);
-  return parts.join(', ');
+  const name = stateName(s.stateCode);
+  const city = typeof s.city === 'string' ? s.city.trim() : '';
+  if (s.stateCode !== null && name !== null) return city ? `${city}, ${s.stateCode}` : name;
+  if (city) return city;
+  return 'United States';
 }
 
 /** The station homepage as a link target: http(s) only, otherwise null. */

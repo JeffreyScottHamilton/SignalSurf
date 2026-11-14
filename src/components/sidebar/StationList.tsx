@@ -1,11 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { SEARCH_PAGE_SIZE } from '@/api/radioBrowser';
-import { CATEGORY_LABELS } from '@/api/categories';
-import { SpinnerIcon } from '@/components/common/icons';
+import { useEffect, useMemo, useRef } from 'react';
+import { GENRE_LABEL } from '@/catalog/genres';
 import { StationRow } from '@/components/common/StationRow';
 import { player, usePlayer } from '@/audio/player';
 import { useStore } from '@/lib/createStore';
-import { exploreStore, initExplore, loadMore, resetExplore, retryExplore } from '@/state/explore';
+import { PAGE_SIZE, exploreStore, initExplore, loadMore, resetExplore, retryExplore } from '@/state/explore';
 import { selectStation, setSheetOpen, uiStore } from '@/state/ui';
 import type { Station } from '@/types';
 import './StationList.css';
@@ -14,8 +12,9 @@ const SKELETON_ROWS = 6;
 
 /** Scrollable station list with loading, error, empty and ready states. */
 export function StationList() {
-  const { query, category, results, status, error, hasMore, loadingMore, loadMoreError, addedLastPage } =
-    useStore(exploreStore);
+  const { query, genre, results: matches, visibleCount, hasMore, status, error } = useStore(exploreStore);
+  // The list shows the first visibleCount matches; the rest are revealed by "Load more".
+  const results = useMemo(() => matches.slice(0, visibleCount), [matches, visibleCount]);
   const selectedId = useStore(uiStore, (s) => s.selected?.id ?? null);
   const playback = usePlayer();
   const playingId = playback.status === 'playing' && playback.station ? playback.station.id : null;
@@ -78,9 +77,7 @@ export function StationList() {
         <p className="ss-list__title">
           {query ? `No stations match “${query}”` : 'No stations found'}
         </p>
-        {category !== 'all' && (
-          <p className="ss-list__note">Category: {CATEGORY_LABELS[category]}</p>
-        )}
+        {genre !== 'all' && <p className="ss-list__note">Genre: {GENRE_LABEL[genre]}</p>}
         <button type="button" className="ss-list__button" onClick={resetExplore}>
           Reset search
         </button>
@@ -118,27 +115,13 @@ export function StationList() {
         <>
           {content}
           <div className="ss-list__more">
-            {loadMoreError && (
-              <p className="ss-list__more-error" role="alert">
-                {loadMoreError}
-              </p>
-            )}
-            <button type="button" className="ss-list__load-more" disabled={loadingMore} onClick={loadMore}>
-              {loadingMore ? (
-                <>
-                  <SpinnerIcon size={16} />
-                  Loading…
-                </>
-              ) : loadMoreError ? (
-                'Try again'
-              ) : (
-                'Load more stations'
-              )}
+            <button type="button" className="ss-list__load-more" onClick={loadMore}>
+              Load more stations
             </button>
           </div>
         </>
       );
-    } else if (results.length > SEARCH_PAGE_SIZE) {
+    } else if (matches.length > PAGE_SIZE) {
       content = (
         <>
           {content}
@@ -155,11 +138,9 @@ export function StationList() {
       </div>
       <div className="ss-sr-only" role="status" aria-live="polite">
         {status === 'ready'
-          ? results.length === 0
+          ? matches.length === 0
             ? 'No stations found'
-            : addedLastPage > 0
-              ? `${addedLastPage} more stations loaded`
-              : `${results.length} ${results.length === 1 ? 'station' : 'stations'} found`
+            : `${results.length} of ${matches.length} ${matches.length === 1 ? 'station' : 'stations'} shown`
           : ''}
       </div>
     </div>

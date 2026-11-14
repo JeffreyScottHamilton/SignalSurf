@@ -12,47 +12,40 @@ function station(overrides: Partial<Station>): Station {
     streamUrl: 'https://example.com/stream',
     homepage: null,
     favicon: null,
-    country: null,
-    countryCode: null,
-    region: null,
+    stateCode: null,
+    city: null,
     tags: [],
-    categories: [],
+    genres: [],
     codec: null,
     bitrate: null,
     hls: false,
     coords: null,
-    lastCheckOk: true,
-    lastCheckTime: null,
     clickCount: 0,
-    votes: 0,
     ...overrides,
   };
 }
 
 describe('stationLocation', () => {
-  it('joins region and country when both exist', () => {
-    expect(stationLocation(station({ region: 'Oslo', country: 'Norway' }))).toBe('Oslo, Norway');
+  it('shows "City, ST" when both are known', () => {
+    expect(stationLocation(station({ city: 'Austin', stateCode: 'TX' }))).toBe('Austin, TX');
   });
 
-  it('returns only the country when region is missing', () => {
-    expect(stationLocation(station({ region: null, country: 'Norway' }))).toBe('Norway');
+  it('shows the full state name when only the state is known', () => {
+    expect(stationLocation(station({ stateCode: 'TX' }))).toBe('Texas');
+    expect(stationLocation(station({ stateCode: 'DC' }))).toBe('District of Columbia');
   });
 
-  it('returns only the region when country is missing', () => {
-    expect(stationLocation(station({ region: 'Oslo', country: null }))).toBe('Oslo');
+  it('shows the city alone when no state is known', () => {
+    expect(stationLocation(station({ city: 'Austin' }))).toBe('Austin');
   });
 
-  it('returns an empty string when neither part exists', () => {
-    expect(stationLocation(station({ region: '  ', country: null }))).toBe('');
+  it('falls back to "United States" when neither is known, and never invents a state', () => {
+    expect(stationLocation(station({}))).toBe('United States');
+    expect(stationLocation(station({ stateCode: 'ZZ' }))).toBe('United States');
   });
-});
 
-describe('stationLocation with malformed parts', () => {
-  it('ignores non-string parts instead of throwing', () => {
-    const bad = { ...station({}), region: 5, country: 'Norway' } as unknown as Station;
-    expect(stationLocation(bad)).toBe('Norway');
-    const both = { ...station({}), region: { x: 1 }, country: false } as unknown as Station;
-    expect(stationLocation(both)).toBe('');
+  it('treats a blank city as unknown', () => {
+    expect(stationLocation(station({ city: '   ', stateCode: 'NY' }))).toBe('New York');
   });
 });
 

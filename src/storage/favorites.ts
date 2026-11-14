@@ -1,8 +1,9 @@
 import { useStore } from '@/lib/createStore';
+import { sanitizeStation } from '@/catalog/sanitize';
 import type { Station } from '@/types';
-import { createPersisted, sanitizeStation } from './persisted';
+import { createPersisted } from './persisted';
 
-export const FAVORITES_KEY = 'signalsurf:favorites:v1';
+export const FAVORITES_KEY = 'roadtrip:favorites:v1';
 
 /** Newest first. Corrupt entries and duplicate ids are dropped. */
 function parseFavorites(raw: unknown): Station[] {
@@ -19,6 +20,11 @@ function parseFavorites(raw: unknown): Station[] {
 }
 
 const { store, commit } = createPersisted<Station[]>(FAVORITES_KEY, parseFavorites);
+
+/** Adds legacy favourites after the current ones (duplicates dropped). Used by the one-time migration. */
+export function absorbLegacyFavorites(raw: unknown[]): void {
+  commit(parseFavorites([...store.get(), ...raw]));
+}
 
 export interface FavoritesApi {
   list(): Station[];

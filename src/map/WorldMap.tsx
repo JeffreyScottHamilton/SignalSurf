@@ -1,33 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import './WorldMap.css';
 import { MinusIcon, PlusIcon } from '@/components/common/icons';
 import { useStore } from '@/lib/createStore';
-import { exploreStore } from '@/state/explore';
-import { initMapData, mapStore } from '@/state/mapData';
+import { initExplore } from '@/state/explore';
+import { useMapStations, useMapStatus } from '@/state/mapData';
 import { uiStore } from '@/state/ui';
 import { createMapController, type MapController } from './mapController';
-import { mergeMarkerStations } from './markerSet';
 
 export function WorldMap() {
-  const stations = useStore(mapStore, (s) => s.stations);
-  const mapStatus = useStore(mapStore, (s) => s.status);
-  const nearStatus = useStore(mapStore, (s) => s.nearStatus);
-  const results = useStore(exploreStore, (s) => s.results);
+  // Markers are the current filter's matches with coordinates, so the map and the list agree.
+  const drawn = useMapStations();
+  const mapStatus = useMapStatus();
   const selected = useStore(uiStore, (s) => s.selected);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<MapController | null>(null);
   const [limits, setLimits] = useState({ atMin: true, atMax: false });
 
-  const drawn = useMemo(
-    () => mergeMarkerStations(stations, selected ? [...results, selected] : results),
-    [stations, results, selected],
-  );
-
   useEffect(() => {
-    initMapData();
+    initExplore();
   }, []);
 
   useEffect(() => {
@@ -58,9 +51,7 @@ export function WorldMap() {
       ? 'Loading stations…'
       : mapStatus === 'error'
         ? 'Station markers unavailable'
-        : nearStatus === 'loading'
-          ? 'Loading stations in this area…'
-          : null;
+        : null;
 
   return (
     <section className="ss-map" aria-label="World map">

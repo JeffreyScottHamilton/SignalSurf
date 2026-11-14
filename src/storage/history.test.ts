@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Station } from '@/types';
 
-const KEY = 'signalsurf:history:v1';
+const KEY = 'roadtrip:history:v1';
 
 function makeStation(id: string): Station {
   return {
@@ -10,19 +10,15 @@ function makeStation(id: string): Station {
     streamUrl: `https://stream.example/${id}`,
     homepage: null,
     favicon: null,
-    country: null,
-    countryCode: null,
-    region: null,
+    stateCode: null,
+    city: null,
     tags: [],
-    categories: [],
+    genres: [],
     codec: null,
     bitrate: null,
     hls: false,
     coords: null,
-    lastCheckOk: true,
-    lastCheckTime: null,
     clickCount: 0,
-    votes: 0,
   };
 }
 

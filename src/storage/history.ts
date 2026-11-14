@@ -1,8 +1,9 @@
 import { useStore } from '@/lib/createStore';
+import { sanitizeStation } from '@/catalog/sanitize';
 import type { HistoryEntry, Station } from '@/types';
-import { createPersisted, sanitizeStation } from './persisted';
+import { createPersisted } from './persisted';
 
-export const HISTORY_KEY = 'signalsurf:history:v1';
+export const HISTORY_KEY = 'roadtrip:history:v1';
 export const HISTORY_LIMIT = 50;
 
 /** Newest first, one entry per station id. Corrupt entries are dropped. */
@@ -25,6 +26,11 @@ function parseHistory(raw: unknown): HistoryEntry[] {
 }
 
 const { store, commit } = createPersisted<HistoryEntry[]>(HISTORY_KEY, parseHistory);
+
+/** Adds legacy entries after the current ones (one per station). Used by the one-time migration. */
+export function absorbLegacyHistory(raw: unknown[]): void {
+  commit(parseHistory([...store.get(), ...raw]));
+}
 
 export const history: {
   list(): HistoryEntry[];

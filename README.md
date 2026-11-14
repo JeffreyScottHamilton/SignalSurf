@@ -87,3 +87,16 @@ Design decisions are recorded in [docs/decisions.md](docs/decisions.md).
 - Escape closes the settings dialog and the open map popup. For the popup, focus must be inside the map.
 - Focus is shown with a 2px outline on `:focus-visible`.
 - The CSS has `prefers-reduced-motion` rules for transitions and animations in the sidebar, player and views.
+
+## Station catalogue
+
+The app ships one pre-built file, `public/catalog.json`, with the US music stations it lists and maps.
+Nothing is fetched at runtime except the click counter. `npm run build` never fetches, so builds are deterministic.
+
+To refresh the catalogue (needs network access to the Radio Browser directory):
+
+```sh
+npm run catalog
+```
+
+The script (`scripts/build-catalog.mjs`) prints a summary: raw count, kept, drop reasons, per-genre counts, coordinates and state sources. The music, genre, state and coordinate rules are in `src/catalog/rules.mjs`, shared with the unit tests in `src/catalog/rules.test.ts`. Commit the regenerated `public/catalog.json` with the rules change, if any.

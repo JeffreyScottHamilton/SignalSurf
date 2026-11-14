@@ -1,7 +1,9 @@
-// End-to-end smoke test for SignalSurf. Plain Node, uses the preinstalled global Playwright.
+// End-to-end smoke test for Roadtrip Radio. Plain Node, uses the preinstalled global Playwright.
 // Runs against `npm run preview` (started and stopped here) unless SS_BASE_URL is set.
-// Station data is real (Radio Browser). Only audio bytes are mocked: every `media` request
-// (and any non-API cross-origin audio URL) is redirected to a local silent stream server.
+// Station lists come from the committed catalogue (public/catalog.json, real Radio Browser data).
+// The directory's station-list endpoints are blocked, so any reliance on them fails the run; only
+// the click counter and its server list may reach the directory. Only audio bytes are mocked: every
+// `media` request (and any non-API cross-origin audio URL) is redirected to a local silent stream server.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -144,6 +146,8 @@ async function main() {
 
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(e.message));
+    // Directory station lists must never be requested: the catalogue is the only source of lists.
+    const directoryListRequests = [];
 
     // Audio bytes come from the local stream server: media requests are redirected there.
     stream = await startStreamServer();
@@ -152,6 +156,10 @@ async function main() {
       const url = new URL(req.url());
       const isApi = API_HOST.test(url.hostname);
       const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+      if (isApi && url.pathname.startsWith('/json/stations')) {
+        directoryListRequests.push(url.pathname);
+        return route.abort();
+      }
       if (req.resourceType() === 'media' || (!isApi && !isLocal && req.resourceType() === 'audio')) {
         return route.fulfill({ status: 302, headers: { location: stream.url } });
       }
@@ -212,19 +220,20 @@ async function main() {
     let firstName = null;
     let secondName = null;
 
-    // a. Page loads with live station rows and no uncaught errors.
-    await step('a', 'page loads with at least 10 live station rows', async () => {
+    // a. Page loads with station rows from the catalogue, without any directory list request.
+    await step('a', 'page loads with at least 10 catalogue rows and no directory list request', async () => {
       await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
       await waitForRows(10, 30000);
       const n = await page.locator('.ss-list__scroll .ss-station-row').count();
       expect(n >= 10, `only ${n} rows`);
+      expect(directoryListRequests.length === 0, `directory list requested: ${directoryListRequests.join(', ')}`);
       // Fresh load, nothing selected: the world view.
       await page.waitForFunction(() => document.querySelectorAll('.leaflet-marker-icon').length >= 1, null, {
         timeout: 30000,
       });
       await sleep(1500);
       await page.screenshot({ path: join(SHOTS, '1440x900-world.png') });
-      return `${n} rows`;
+      return `${n} rows, no directory list request`;
     });
 
     // b. Search narrows results; a nonsense query shows the empty state; Reset restores rows.
@@ -241,7 +250,6 @@ async function main() {
       const names = await rowNames();
       expect(names.length > 0, 'no rows for "jazz"');
       expect(names.join('|') !== before, 'rows did not change for "jazz"');
-      expect(names.some((n) => /jazz/i.test(n)), `no name matches "jazz": ${names.slice(0, 5).join(', ')}`);
       await search().fill('');
       await page.waitForTimeout(700);
       await waitForRows(1);
@@ -287,17 +295,33 @@ async function main() {
       );
       expect((await page.locator('.ss-list__load-more').count()) === 0, 'Load more shown in the empty state');
       await page.locator('.ss-list__button', { hasText: 'Reset search' }).click();
+      expect(afterCount - beforeCount === 150, `rows ${beforeCount} -> ${afterCount}, expected 150 more`);
       await waitForRows(1, 20000);
       return `${beforeCount} -> ${afterCount} rows`;
     });
 
-    // c. Category chip filters rows and reflects pressed state.
-    await step('c', 'News chip filters rows and sets aria-pressed; All restores', async () => {
+    // b3. A state name finds stations in that state (location text shows it).
+    await step('b3', 'search "texas" lists stations located in Texas', async () => {
+      await search().fill('texas');
+      await page.waitForTimeout(700);
+      await waitForRows(1, 20000);
+      const locations = await page.locator('.ss-list__scroll .ss-station-row__location').allTextContents();
+      const inTexas = locations.filter((l) => /\bTX\b|Texas/.test(l));
+      expect(locations.length > 0, 'no rows for "texas"');
+      expect(inTexas.length > 0, `no location shows Texas: ${locations.slice(0, 5).join(' | ')}`);
+      await search().fill('');
+      await page.waitForTimeout(700);
+      await waitForRows(1);
+      return `${locations.length} rows, ${inTexas.length} shown with TX/Texas`;
+    });
+
+    // c. Genre chip filters rows and reflects pressed state.
+    await step('c', 'Rock chip filters rows and sets aria-pressed; All restores', async () => {
       const allNames = (await rowNames()).join('|');
-      await chip('News').click();
+      await chip('Rock').click();
       expect(
-        (await chip('News').getAttribute('aria-pressed')) === 'true',
-        'News chip not pressed',
+        (await chip('Rock').getAttribute('aria-pressed')) === 'true',
+        'Rock chip not pressed',
       );
       await page.waitForFunction(
         () => document.querySelector('.ss-list__scroll')?.getAttribute('aria-busy') !== 'true',
@@ -310,13 +334,13 @@ async function main() {
         null,
         { timeout: 20000 },
       );
-      const newsNames = (await rowNames()).join('|');
-      expect(newsNames.length > 0, 'no rows for News');
-      expect(newsNames !== allNames, 'rows did not update for News');
+      const rockNames = (await rowNames()).join('|');
+      expect(rockNames.length > 0, 'no rows for Rock');
+      expect(rockNames !== allNames, 'rows did not update for Rock');
       await chip('All').click();
       expect((await chip('All').getAttribute('aria-pressed')) === 'true', 'All chip not pressed');
       await waitForRows(1);
-      return 'News rows differ from All';
+      return 'Rock rows differ from All';
     });
 
     // d. Clicking a row starts playback; the player shows its name and reports Live.

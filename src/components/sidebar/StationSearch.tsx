@@ -32,7 +32,7 @@ export function StationSearch() {
         type="search"
         autoComplete="off"
         spellCheck={false}
-        placeholder="Search stations, cities, or countries…"
+        placeholder="Search stations, cities, or states…"
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);

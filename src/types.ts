@@ -1,25 +1,23 @@
-export type Category = 'all' | 'music' | 'news' | 'talk' | 'sports';
-export type StationCategory = Exclude<Category, 'all'>;
+export type Genre =
+  | 'rock' | 'country' | 'pop' | 'hiphop' | 'jazz' | 'classical' | 'electronic'
+  | 'oldies' | 'latin' | 'christian' | 'indie' | 'folk';
+export type GenreFilter = 'all' | Genre;
 export interface Coords { lat: number; lng: number }
 export interface Station {
   id: string;                 // stationuuid
   name: string;               // trimmed, non-empty
-  streamUrl: string;          // url_resolved || url; https only
+  streamUrl: string;          // https only
   homepage: string | null;    // http(s) only
   favicon: string | null;     // https only
-  country: string | null;     // display name
-  countryCode: string | null; // ISO 3166-1 alpha-2, upper case
-  region: string | null;      // Radio Browser `state` (city/region as entered)
-  tags: string[];             // lower case, trimmed, max 8
-  categories: StationCategory[];
+  stateCode: string | null;   // 2-letter US state or territory code; never guessed
+  city: string | null;        // city as written in the directory, when a state was found with it
+  tags: string[];             // lower case, trimmed, max 5
+  genres: Genre[];            // may be empty for bare "music" / "variety" stations
   codec: string | null;
-  bitrate: number | null;     // kbps, null when 0
+  bitrate: number | null;     // kbps, null when unknown
   hls: boolean;
-  coords: Coords | null;      // null unless both finite, in range, and not (0,0)
-  lastCheckOk: boolean;
-  lastCheckTime: string | null; // ISO 8601
-  clickCount: number;
-  votes: number;
+  coords: Coords | null;      // null unless inside a US box
+  clickCount: number;         // directory popularity, used for ordering
 }
 export interface HistoryEntry { station: Station; playedAt: number } // epoch ms
 export type View = 'explore' | 'favorites' | 'history';

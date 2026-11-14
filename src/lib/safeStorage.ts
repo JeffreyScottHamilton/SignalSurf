@@ -3,7 +3,7 @@
  * when storage is blocked, full, or holds corrupt JSON.
  */
 
-const PROBE_KEY = 'signalsurf:probe';
+const PROBE_KEY = 'roadtrip:probe';
 
 export function storageAvailable(): boolean {
   try {

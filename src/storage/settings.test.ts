@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const KEY = 'signalsurf:settings:v1';
+const KEY = 'roadtrip:settings:v1';
 
 async function loadSettings() {
   vi.resetModules();

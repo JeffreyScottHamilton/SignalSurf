@@ -1,7 +1,7 @@
 import { useStore } from '@/lib/createStore';
 import { createPersisted } from './persisted';
 
-export const SETTINGS_KEY = 'signalsurf:settings:v1';
+export const SETTINGS_KEY = 'roadtrip:settings:v1';
 export const DEFAULT_VOLUME = 0.75;
 
 export interface SettingsState {
@@ -21,6 +21,11 @@ function parseSettings(raw: unknown): SettingsState {
 }
 
 const { store, commit } = createPersisted<SettingsState>(SETTINGS_KEY, parseSettings);
+
+/** Used by the one-time migration only when the new key is absent. */
+export function absorbLegacySettings(raw: unknown): void {
+  commit(parseSettings(raw));
+}
 
 export const settings: {
   get(): SettingsState;

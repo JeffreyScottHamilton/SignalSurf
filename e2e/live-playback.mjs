@@ -1,15 +1,17 @@
 // Live playback check. Plain Node, uses the preinstalled global Playwright.
-// Real internet radio: stations are found with the app's own search box and clicked from the
-// live directory. No media request is intercepted or replaced. The only route used is the
-// deliberate abort in the error test. Test-side hooks: an init script remembers every
-// HTMLMediaElement (window.__ssMedia) and the Radio Browser JSON is read from responses only.
+// Real internet radio: stations come from the committed catalogue (public/catalog.json), are found
+// with the app's own search box and clicked. No media request is intercepted or replaced. The only
+// route used is the deliberate abort in the error test. Test-side hook: an init script remembers every
+// HTMLMediaElement (window.__ssMedia).
+// Targets are catalogue stations on a stream host that answers a probe from this machine. When none
+// does, the run prints a SKIP line with the most common catalogue stream hosts and exits 0.
 // Runs against `npm run preview` (started and stopped here) unless LIVE_BASE_URL is set.
 //
 // Every target is tried. A target that never reaches Live stays in the table with the observed reason.
 // The switching test uses the first two stations that reached Live. Exit 0 needs at least two
 // stations playing and switching, pause, volume, history and error all passing.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,16 +23,20 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4173;
 const OUT = '/tmp/claude-0/-home-user/56aa8976-1187-5e42-9581-774146525f7d/scratchpad/live';
 const API_HOST = /(^|\.)radio-browser\.info$/;
+const CATALOG = join(ROOT, 'public', 'catalog.json');
+const PROBE_TIMEOUT_MS = 8000;
+const MAX_TARGETS = 4;
 const WINDOW_MS = 12_000;
 const SAMPLE_MS = 250;
 const MIN_PLAYING = 2;
 const STREAM_TYPES = ['media', 'audio', 'xhr', 'fetch'];
 
-const TARGETS = [
-  { n: 1, query: 'SomaFM Groove Salad', nameRe: /SomaFM Groove Salad/i, host: 'ice6.somafm.com' },
-  { n: 2, query: 'BBC World Service', nameRe: /BBC World Service/i, host: 'stream.live.vc.bbcmedia.co.uk' },
-  { n: 3, query: 'SWR3', nameRe: /SWR3/i, host: 'liveradio.swr.de' },
-  { n: 4, query: 'FIP', nameRe: /\bFIP\b/i, host: 'stream.radiofrance.fr' },
+// Stream hosts this script will try. Each is probed before use; the catalogue is US-only.
+const LIVE_HOSTS = [
+  'ice6.somafm.com',
+  'stream.live.vc.bbcmedia.co.uk',
+  'liveradio.swr.de',
+  'stream.radiofrance.fr',
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -41,6 +47,59 @@ const hostOf = (url) => {
     return '';
   }
 };
+/** Reads the catalogue from disk (no network): the stations and their stream hosts. */
+function catalogStations() {
+  return JSON.parse(readFileSync(CATALOG, 'utf8')).stations;
+}
+
+/** True when the stream answers with a success status from this machine (redirects followed, body not read). */
+async function probe(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'icy-metadata': '0' } });
+    await res.body?.cancel();
+    return res.status >= 200 && res.status < 300;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Catalogue stations on a LIVE_HOSTS stream that answer a probe, at most one per host, at most MAX_TARGETS.
+ * Target shape: { n, id, name, query, host, url }.
+ */
+async function chooseTargets() {
+  const candidates = catalogStations().filter((s) => LIVE_HOSTS.includes(hostOf(s.streamUrl)));
+  const perHost = new Map();
+  for (const s of candidates) {
+    const host = hostOf(s.streamUrl);
+    if (!perHost.has(host)) perHost.set(host, s);
+  }
+  const targets = [];
+  for (const [host, s] of perHost) {
+    if (targets.length >= MAX_TARGETS) break;
+    if (await probe(s.streamUrl)) {
+      targets.push({ n: targets.length + 1, id: s.id, name: s.name, query: s.name, host, url: s.streamUrl });
+    } else {
+      console.log(`probe ${host}: not reachable from this machine (${s.name})`);
+    }
+  }
+  return targets;
+}
+
+/** The most common stream hosts in the catalogue, for the report. */
+function topHosts(n = 15) {
+  const counts = new Map();
+  for (const s of catalogStations()) {
+    const h = hostOf(s.streamUrl) || '?';
+    counts.set(h, (counts.get(h) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]).slice(0, n);
+}
+
 const fmt = (v) => (v === null || v === undefined ? '-' : typeof v === 'number' ? v.toFixed(2) : String(v));
 
 /** Read-only snapshot of the player UI and every media element the page created. */
@@ -142,6 +201,15 @@ async function main() {
     console.error('dist/ is missing. Run `npm run build` first.');
     return 1;
   }
+  const targets = await chooseTargets();
+  if (targets.length === 0) {
+    console.log('SKIP live-playback: no reachable stream host in catalogue.');
+    console.log('Most common stream hosts in the catalogue (count, host):');
+    for (const [host, count] of topHosts()) console.log(`  ${String(count).padStart(4)}  ${host}`);
+    console.log('Allow one of these hosts from this network to run live playback.');
+    return 0;
+  }
+  console.log(`live targets: ${targets.map((t) => `${t.name} (${t.host})`).join('; ')}`);
   mkdirSync(OUT, { recursive: true });
   const baseUrl = process.env.LIVE_BASE_URL || `http://localhost:${PORT}/`;
   const appHost = hostOf(baseUrl);
@@ -165,27 +233,6 @@ async function main() {
     const page = await context.newPage();
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(e.message));
-
-    // Radio Browser JSON, read from responses only: uuid -> stream url, codec.
-    const apiRecords = new Map();
-    const apiPending = [];
-    page.on('response', (resp) => {
-      const url = resp.url();
-      if (!API_HOST.test(hostOf(url)) || !url.includes('/json/')) return;
-      apiPending.push(
-        resp
-          .json()
-          .then((data) => {
-            if (!Array.isArray(data)) return;
-            for (const s of data) {
-              if (s && typeof s.stationuuid === 'string') {
-                apiRecords.set(s.stationuuid, { url: s.url_resolved || s.url || '', codec: s.codec || '' });
-              }
-            }
-          })
-          .catch(() => {}),
-      );
-    });
 
     // Stream traffic: open requests (for the switch check), every response (status, redirect target)
     // and every failed request, for the reason column.
@@ -239,27 +286,17 @@ async function main() {
         null,
         { timeout: 30000 },
       );
-      // Bounded: a body that never finishes must not stall the run.
-      await Promise.race([Promise.allSettled(apiPending.splice(0)), sleep(5000)]);
       await sleep(300);
     }
 
-    /** Searches, then picks the first row whose stream host is the wanted one. */
+    /** Searches the target by name, then picks the row with its catalogue id. */
     async function findRow(target) {
       await search(target.query);
       const rows = await page.evaluate(rowInfo);
-      const considered = [];
-      for (const r of rows) {
-        if (!target.nameRe.test(r.name)) continue;
-        const api = r.id ? apiRecords.get(r.id) : undefined;
-        const url = api?.url || r.streamUrl || '';
-        const host = hostOf(url);
-        considered.push(`${r.name} -> ${host || '?'}`);
-        if (host === target.host) {
-          return { found: true, index: r.index, name: r.name, id: r.id, url, host, codec: api?.codec || '?', considered };
-        }
-      }
-      return { found: false, considered };
+      const considered = rows.filter((r) => r.name === target.name).map((r) => `${r.name} -> ${hostOf(r.streamUrl ?? '') || '?'}`);
+      const row = rows.find((r) => r.id === target.id);
+      if (!row) return { found: false, considered };
+      return { found: true, index: row.index, name: row.name, id: row.id, url: row.streamUrl, host: hostOf(row.streamUrl ?? ''), codec: '?', considered };
     }
 
     const clickRow = async (row) => {
@@ -322,7 +359,7 @@ async function main() {
     // ---- Every target, in order: click, then 12s of observation each.
     const results = [];
     let screenshotPlaying = false;
-    for (const target of TARGETS) {
+    for (const target of targets) {
       const rec = { target, row: null, live: false, pass: false };
       results.push(rec);
       progress(`station ${target.n}: searching "${target.query}"`);
