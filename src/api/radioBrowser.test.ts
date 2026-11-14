@@ -380,3 +380,88 @@ describe('reportClick', () => {
     await new Promise((r) => setTimeout(r, 0));
   });
 });
+
+describe('searchStationsPage paging', () => {
+  it('sends offset on the popular request and on every name, state and country request', async () => {
+    installFetch(() => json([]));
+    await api.searchStationsPage({ query: '', category: 'all', limit: 150, offset: 150 });
+    expect(searchCalls().map((u) => param(u, 'offset'))).toEqual(['150']);
+
+    calls = [];
+    installFetch(() => json([]));
+    await api.searchStationsPage({ query: 'japan', category: 'all', limit: 150, offset: 300 });
+    const search = searchCalls();
+    expect(search).toHaveLength(3);
+    expect(search.every((u) => param(u, 'offset') === '300')).toBe(true);
+  });
+
+  it('sends offset on the category tag-hinted request', async () => {
+    installFetch(() => json([]));
+    await api.searchStationsPage({ query: '', category: 'news', limit: 150, offset: 150 });
+    expect(searchCalls().every((u) => param(u, 'offset') === '150' && param(u, 'tag') === 'news')).toBe(true);
+  });
+
+  it('reports hasMore true when the popular page is full in raw rows, even if filtering shrinks it', async () => {
+    const rows = [rec('a'), rec('b', { url_resolved: 'http://stream.test/x', url: 'http://stream.test/x' }), rec('c')];
+    installFetch(() => json(rows));
+    const page = await api.searchStationsPage({ query: '', category: 'all', limit: 3 });
+    expect(page.stations.map((s) => s.id)).toEqual(['a', 'c']);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it('reports hasMore false when the popular page is short', async () => {
+    installFetch(() => json([rec('a'), rec('b')]));
+    const page = await api.searchStationsPage({ query: '', category: 'all', limit: 3 });
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('reports hasMore true when any query request is full, even if another is short', async () => {
+    installFetch((url) => {
+      if (param(url, 'name')) return json([rec('a'), rec('b')]);
+      return json([rec('c')]);
+    });
+    const page = await api.searchStationsPage({ query: 'jazz', category: 'all', limit: 2 });
+    expect(page.hasMore).toBe(true);
+  });
+
+  it('reports hasMore false when every query request is short', async () => {
+    installFetch((url) => (param(url, 'name') ? json([rec('a')]) : json([rec('b')])));
+    const page = await api.searchStationsPage({ query: 'jazz', category: 'all', limit: 2 });
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('skips the category top-up for offset > 0', async () => {
+    installFetch((url) => {
+      if (param(url, 'tag')) return json([rec('m1', { tags: 'jazz' })]);
+      return json(Array.from({ length: 25 }, (_, i) => rec(`w${i}`, { tags: 'pop' })));
+    });
+    const page = await api.searchStationsPage({ query: '', category: 'music', limit: 150, offset: 150 });
+    expect(searchCalls()).toHaveLength(1);
+    expect(page.stations.map((s) => s.id)).toEqual(['m1']);
+  });
+
+  it('keeps the top-up on the first page', async () => {
+    installFetch((url) => {
+      if (param(url, 'tag')) return json([rec('m1', { tags: 'jazz' })]);
+      return json([]);
+    });
+    await api.searchStationsPage({ query: '', category: 'music', limit: 150, offset: 0 });
+    expect(searchCalls()).toHaveLength(2);
+  });
+
+  it('does not count the top-up request towards hasMore', async () => {
+    installFetch((url) => {
+      if (param(url, 'tag')) return json([rec('m1', { tags: 'jazz' })]);
+      return json(Array.from({ length: 500 }, (_, i) => rec(`w${i}`, { tags: 'pop', clickcount: 500 - i })));
+    });
+    const page = await api.searchStationsPage({ query: '', category: 'music', limit: 150 });
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('searchStations still returns only the stations, from offset 0', async () => {
+    installFetch(() => json([rec('a')]));
+    const out = await api.searchStations({ query: '', category: 'all' });
+    expect(out.map((s) => s.id)).toEqual(['a']);
+    expect(searchCalls().every((u) => param(u, 'offset') === '0')).toBe(true);
+  });
+});

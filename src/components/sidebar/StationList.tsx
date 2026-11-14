@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
+import { SEARCH_PAGE_SIZE } from '@/api/radioBrowser';
 import { CATEGORY_LABELS } from '@/api/categories';
+import { SpinnerIcon } from '@/components/common/icons';
 import { StationRow } from '@/components/common/StationRow';
 import { player, usePlayer } from '@/audio/player';
 import { useStore } from '@/lib/createStore';
-import { exploreStore, initExplore, resetExplore, retryExplore } from '@/state/explore';
+import { exploreStore, initExplore, loadMore, resetExplore, retryExplore } from '@/state/explore';
 import { selectStation, setSheetOpen, uiStore } from '@/state/ui';
 import type { Station } from '@/types';
 import './StationList.css';
@@ -12,7 +14,8 @@ const SKELETON_ROWS = 6;
 
 /** Scrollable station list with loading, error, empty and ready states. */
 export function StationList() {
-  const { query, category, results, status, error } = useStore(exploreStore);
+  const { query, category, results, status, error, hasMore, loadingMore, loadMoreError, addedLastPage } =
+    useStore(exploreStore);
   const selectedId = useStore(uiStore, (s) => s.selected?.id ?? null);
   const playback = usePlayer();
   const playingId = playback.status === 'playing' && playback.station ? playback.station.id : null;
@@ -23,8 +26,15 @@ export function StationList() {
   }, []);
 
   // Keep the selected station visible, whether it was picked here or on the map.
+  // A load-more page only appends, so it must not move the list: skip the scroll for that case.
+  const seen = useRef<{ results: Station[]; selectedId: string | null }>({ results: [], selectedId: null });
   useEffect(() => {
+    const prev = seen.current;
+    seen.current = { results, selectedId };
     if (selectedId === null) return;
+    const appended =
+      selectedId === prev.selectedId && prev.results.length > 0 && results.length > prev.results.length && results[0] === prev.results[0];
+    if (appended) return;
     scrollRef.current
       ?.querySelector('[aria-current="true"]')
       ?.scrollIntoView({ block: 'nearest' });
@@ -103,6 +113,39 @@ export function StationList() {
         })}
       </ul>
     );
+    if (hasMore) {
+      content = (
+        <>
+          {content}
+          <div className="ss-list__more">
+            {loadMoreError && (
+              <p className="ss-list__more-error" role="alert">
+                {loadMoreError}
+              </p>
+            )}
+            <button type="button" className="ss-list__load-more" disabled={loadingMore} onClick={loadMore}>
+              {loadingMore ? (
+                <>
+                  <SpinnerIcon size={16} />
+                  Loading…
+                </>
+              ) : loadMoreError ? (
+                'Try again'
+              ) : (
+                'Load more stations'
+              )}
+            </button>
+          </div>
+        </>
+      );
+    } else if (results.length > SEARCH_PAGE_SIZE) {
+      content = (
+        <>
+          {content}
+          <p className="ss-list__end">End of results</p>
+        </>
+      );
+    }
   }
 
   return (
@@ -114,7 +157,9 @@ export function StationList() {
         {status === 'ready'
           ? results.length === 0
             ? 'No stations found'
-            : `${results.length} ${results.length === 1 ? 'station' : 'stations'} found`
+            : addedLastPage > 0
+              ? `${addedLastPage} more stations loaded`
+              : `${results.length} ${results.length === 1 ? 'station' : 'stations'} found`
           : ''}
       </div>
     </div>

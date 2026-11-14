@@ -19,7 +19,8 @@ const FALLBACK_HOSTS = ['de1', 'de2', 'fi1'].map((h) => `${h}.api.radio-browser.
 const HOST_PATTERN = /^[a-z0-9-]+\.api\.radio-browser\.info$/;
 const DISCOVERY_TIMEOUT_MS = 5000;
 const REQUEST_TIMEOUT_MS = 15000;
-const DEFAULT_SEARCH_LIMIT = 150;
+/** Stations per search page. Also the paging step: page n starts at offset n x this size. */
+export const SEARCH_PAGE_SIZE = 150;
 const TOP_UP_THRESHOLD = 20;
 const TOP_UP_LIMIT = 500;
 const NEAR_DEFAULT_LIMIT = 200;
@@ -233,23 +234,37 @@ function firstFailure(results: PromiseSettledResult<unknown[]>[]): RadioApiError
   return new RadioApiError('network', 'Network request failed.');
 }
 
+export interface StationPage {
+  stations: Station[];
+  /** True when any underlying request returned a full page of raw rows, so the next offset may hold more. */
+  hasMore: boolean;
+}
+
 /**
- * Searches stations. Empty query: popular stations (optionally hinted by tag,
- * topped up from a larger popular list when the hint yields too few).
+ * One page of search results, starting at `offset`. Empty query: popular stations (optionally hinted by tag;
+ * the first page is topped up from a larger popular list when the hint yields too few).
  * Query: name and state matches, plus a country-code match when the query names a country; merged, deduped and sorted by clicks.
+ * `hasMore` is judged on raw rows, before filtering, because filtering can shrink a full page.
  */
-export async function searchStations(
-  p: { query: string; category: Category; limit?: number },
+export async function searchStationsPage(
+  p: { query: string; category: Category; limit?: number; offset?: number },
   signal?: AbortSignal,
-): Promise<Station[]> {
+): Promise<StationPage> {
   const query = p.query.trim();
-  const limit = Math.max(1, Math.floor(p.limit ?? DEFAULT_SEARCH_LIMIT));
+  const limit = Math.max(1, Math.floor(p.limit ?? SEARCH_PAGE_SIZE));
+  const offset = Math.max(0, Math.floor(p.offset ?? 0));
   const hint = p.category === 'all' ? undefined : TAG_HINT[p.category];
-  const common: Record<string, string> = { order: 'clickcount', reverse: 'true', limit: String(limit) };
+  const common: Record<string, string> = {
+    order: 'clickcount',
+    reverse: 'true',
+    limit: String(limit),
+    offset: String(offset),
+  };
   if (hint) common.tag = hint;
   const path = '/json/stations/search';
 
   let rows: Station[];
+  let hasMore: boolean;
   if (query.length > 0) {
     const countryCode = countryCodeForQuery(query);
     const requests: Promise<unknown[]>[] = [
@@ -261,18 +276,35 @@ export async function searchStations(
     if (signal?.aborted) throw cancelled();
     const ok = settled.filter((r): r is PromiseFulfilledResult<unknown[]> => r.status === 'fulfilled');
     if (ok.length === 0) throw firstFailure(settled);
+    hasMore = ok.some((r) => r.value.length >= limit);
     rows = ok.flatMap((r) => toStations(r.value));
   } else {
-    rows = toStations(await apiList(path, common, signal));
-    if (hint && inCategory(rows, p.category).length < TOP_UP_THRESHOLD) {
-      const wide = await apiList(path, { order: 'clickcount', reverse: 'true', limit: String(TOP_UP_LIMIT) }, signal);
+    const raw = await apiList(path, common, signal);
+    hasMore = raw.length >= limit;
+    rows = toStations(raw);
+    // The top-up is a one-off first-page fallback with its own size, so it does not count towards hasMore.
+    if (offset === 0 && hint && inCategory(rows, p.category).length < TOP_UP_THRESHOLD) {
+      const wide = await apiList(
+        path,
+        { order: 'clickcount', reverse: 'true', limit: String(TOP_UP_LIMIT), offset: '0' },
+        signal,
+      );
       rows = rows.concat(toStations(wide));
     }
   }
 
   const unique = dedupeStations(inCategory(rows, p.category));
   unique.sort(byPopularity);
-  return unique.slice(0, limit);
+  return { stations: unique.slice(0, limit), hasMore };
+}
+
+/** First page of search results. See searchStationsPage. */
+export async function searchStations(
+  p: { query: string; category: Category; limit?: number },
+  signal?: AbortSignal,
+): Promise<Station[]> {
+  const page = await searchStationsPage({ ...p, offset: 0 }, signal);
+  return page.stations;
 }
 
 /** Popular stations that have coordinates, world-wide. One request per session. */

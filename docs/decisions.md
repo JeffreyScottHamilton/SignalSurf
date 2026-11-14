@@ -46,6 +46,10 @@ Radio Browser tags are free text. `classifyTags` (`src/api/categories.ts`) match
 
 Favourites and history store a copy of each station, keyed by its Radio Browser `stationuuid` (`station.id`) in `localStorage` under `signalsurf:favorites:v1` and `signalsurf:history:v1` (`src/storage/`). History keeps 50 entries, newest first, and moves an existing station to the top. A snapshot is kept so a saved station still shows its name after the directory changes or the station goes offline. All storage access goes through `safeStorage`, so the app still works when storage is blocked. Reason: no account or server to sync with.
 
+## The station list pages on demand with `offset`
+
+The list starts with the first 150 results, and "Load more stations" requests the next page with `offset` = pages loaded x 150 (`searchStationsPage`, `loadMore` in `src/state/explore.ts`), appending only stations not already listed. Nothing is stored between presses, and a new search discards the paging. Reason: the whole Radio Browser catalogue can be reached without fetching it all up front, and the user decides when to spend the requests.
+
 ## Small custom store instead of a state library
 
 `src/lib/createStore.ts` is about one module: `createStore` plus a `useStore` hook built on `useSyncExternalStore`. Routing is not a library either: the three views are switched with `uiStore` state, and the URL does not change. Reason: the app has a few shared values (explore results, map stations, selection, player state) and no need for a state library or a router. The package list in `package.json` has neither.

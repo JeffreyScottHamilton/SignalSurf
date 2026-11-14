@@ -6,6 +6,7 @@ SignalSurf is a web app for finding and playing live internet radio stations on 
 
 - World map with station markers, grouped into clusters. The 1000 most-clicked stations with coordinates load at start, and nearby stations load as you zoom in from zoom 5.
 - Station search by name, city or country, with category filters: All, Music, News, Talk and Sports.
+- "Load more stations" under the list fetches the next page of results on demand (150 at a time, using the API's `offset`), and nothing is stored between presses.
 - Playback of live streams with play and pause, previous and next through the list you started from, volume and mute. The player shows "Live" only after the browser reports that the stream is playing.
 - Browser media controls (play, pause, previous, next) through the Media Session API.
 - Favourites and history, stored in this browser only.

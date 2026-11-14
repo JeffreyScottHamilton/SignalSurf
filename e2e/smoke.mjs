@@ -259,6 +259,38 @@ async function main() {
       return `${names.length} jazz rows`;
     });
 
+    // b2. Load more appends the next page at the end of the list and keeps the first row; a nonsense query has no Load more.
+    await step('b2', 'load more appends rows after scrolling to the end; first row unchanged; empty state has no Load more', async () => {
+      await waitForRows(1);
+      const beforeCount = await page.locator('.ss-list__scroll .ss-station-row').count();
+      const beforeFirst = (await rowNames())[0];
+      await page.locator('.ss-list__scroll').evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      const more = page.locator('.ss-list__load-more');
+      await more.waitFor({ state: 'visible', timeout: 10000 });
+      await more.click();
+      await page.waitForFunction(
+        (n) => document.querySelectorAll('.ss-list__scroll .ss-station-row').length > n,
+        beforeCount,
+        { timeout: 20000 },
+      );
+      const afterCount = await page.locator('.ss-list__scroll .ss-station-row').count();
+      const afterFirst = (await rowNames())[0];
+      expect(afterCount > beforeCount, `rows ${beforeCount} -> ${afterCount}, expected an increase`);
+      expect(afterFirst === beforeFirst, `first row changed from "${beforeFirst}" to "${afterFirst}"`);
+      await search().fill('qzxwv9kjhgfd');
+      await page.waitForFunction(
+        () => document.querySelector('.ss-list__state .ss-list__button')?.textContent?.includes('Reset search'),
+        null,
+        { timeout: 20000 },
+      );
+      expect((await page.locator('.ss-list__load-more').count()) === 0, 'Load more shown in the empty state');
+      await page.locator('.ss-list__button', { hasText: 'Reset search' }).click();
+      await waitForRows(1, 20000);
+      return `${beforeCount} -> ${afterCount} rows`;
+    });
+
     // c. Category chip filters rows and reflects pressed state.
     await step('c', 'News chip filters rows and sets aria-pressed; All restores', async () => {
       const allNames = (await rowNames()).join('|');

@@ -185,3 +185,210 @@ describe('explore store', () => {
     expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['a']);
   });
 });
+
+describe('load more', () => {
+  /** Pages of 150 raw rows by offset; ids are `${prefix}${offset + i}`. */
+  function pageHandler(total: number, prefix = 's', hasNonsenseName = false) {
+    return (url: URL) => {
+      const offset = Number(url.searchParams.get('offset') ?? '0');
+      const n = Math.max(0, Math.min(150, total - offset));
+      void hasNonsenseName;
+      return json(Array.from({ length: n }, (_, i) => rec(`${prefix}${offset + i}`)));
+    };
+  }
+
+  function offsets(): string[] {
+    return searchCalls().map((u) => u.searchParams.get('offset') ?? '');
+  }
+
+  it('starts with hasMore false, loadingMore false and no load error', () => {
+    expect(ex.exploreStore.get()).toMatchObject({ hasMore: false, loadingMore: false, loadMoreError: null });
+  });
+
+  it('appends the next page at offset = pages loaded x 150', async () => {
+    installFetch(pageHandler(300));
+    ex.initExplore();
+    await settle();
+    expect(ex.exploreStore.get()).toMatchObject({ status: 'ready', hasMore: true });
+    expect(ex.exploreStore.get().results).toHaveLength(150);
+
+    ex.loadMore();
+    await settle();
+    const s = ex.exploreStore.get();
+    expect(s.results).toHaveLength(300);
+    expect(s.results[0].id).toBe('s0');
+    expect(s.results[299].id).toBe('s299');
+    expect(s.hasMore).toBe(true);
+    expect(s.loadingMore).toBe(false);
+    expect(offsets()).toEqual(['0', '150']);
+
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get()).toMatchObject({ hasMore: false, addedLastPage: 0 });
+    expect(ex.exploreStore.get().results).toHaveLength(300);
+    expect(offsets()).toEqual(['0', '150', '300']);
+  });
+
+  it('de-duplicates appended stations by id and by stream URL', async () => {
+    installFetch((url) => {
+      const offset = url.searchParams.get('offset');
+      if (offset === '0') return json([rec('a'), rec('b')]);
+      return json([rec('a'), rec('c'), { ...rec('d'), url_resolved: 'https://stream.test/b', url: 'https://stream.test/b' }]);
+    });
+    ex.initExplore();
+    await settle();
+    // Force hasMore on the short first page so loadMore is allowed.
+    ex.exploreStore.set((prev) => ({ ...prev, hasMore: true }));
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does nothing unless the status is ready and hasMore is true', async () => {
+    installFetch(pageHandler(10));
+    ex.loadMore();
+    await settle();
+    expect(searchCalls()).toHaveLength(0);
+    ex.initExplore();
+    await settle();
+    expect(ex.exploreStore.get().hasMore).toBe(false);
+    ex.loadMore();
+    await settle();
+    expect(searchCalls()).toHaveLength(1);
+  });
+
+  it('never requests twice while a page is loading', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    installFetch(async (url) => {
+      if (url.searchParams.get('offset') === '150') await gate;
+      return pageHandler(300)(url);
+    });
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get().loadingMore).toBe(true);
+    expect(offsets().filter((o) => o === '150')).toHaveLength(1);
+    release();
+    await settle();
+    expect(ex.exploreStore.get().loadingMore).toBe(false);
+    expect(ex.exploreStore.get().results).toHaveLength(300);
+  });
+
+  it('a page that adds nothing new but has more keeps the button available without looping', async () => {
+    installFetch((url) => {
+      const offset = url.searchParams.get('offset');
+      if (offset === '0') return json(Array.from({ length: 150 }, (_, i) => rec(`s${i}`)));
+      // Full raw page, but every row is already listed.
+      return json(Array.from({ length: 150 }, (_, i) => rec(`s${i}`)));
+    });
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    await settle();
+    const s = ex.exploreStore.get();
+    expect(s.results).toHaveLength(150);
+    expect(s.hasMore).toBe(true);
+    expect(searchCalls()).toHaveLength(2);
+    ex.loadMore();
+    await settle();
+    expect(offsets()).toEqual(['0', '150', '300']);
+  });
+
+  it('resets paging when the query changes, and a new search starts from offset 0', async () => {
+    installFetch(pageHandler(300));
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get().results).toHaveLength(300);
+
+    installFetch(pageHandler(300, 'q'));
+    ex.setQuery('zz');
+    await settle(400);
+    await settle();
+    expect(ex.exploreStore.get()).toMatchObject({ query: 'zz', hasMore: true, loadingMore: false, loadMoreError: null });
+    expect(ex.exploreStore.get().results).toHaveLength(150);
+    calls = [];
+    ex.loadMore();
+    await settle();
+    expect(offsets().every((o) => o === '150')).toBe(true);
+    expect(ex.exploreStore.get().results[150].id).toBe('q150');
+  });
+
+  it('a stale load-more from an older query never appends to the new results', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    installFetch(async (url) => {
+      if (url.searchParams.get('offset') === '150') await gate;
+      return pageHandler(300)(url);
+    });
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get().loadingMore).toBe(true);
+
+    installFetch(() => json([rec('fresh')]));
+    ex.resetExplore();
+    await settle();
+    expect(ex.exploreStore.get()).toMatchObject({ loadingMore: false, hasMore: false, loadMoreError: null });
+    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['fresh']);
+
+    release();
+    await settle();
+    expect(ex.exploreStore.get().results.map((s) => s.id)).toEqual(['fresh']);
+    expect(ex.exploreStore.get().loadingMore).toBe(false);
+  });
+
+  it('a failed load-more sets the message, keeps the list, and leaves more available', async () => {
+    installFetch((url) => {
+      if (url.searchParams.get('offset') === '150') throw new TypeError('fetch failed');
+      return pageHandler(300)(url);
+    });
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    await settle();
+    const s = ex.exploreStore.get();
+    expect(s.loadMoreError).toBe("Couldn't load more stations. Try again.");
+    expect(s.loadingMore).toBe(false);
+    expect(s.status).toBe('ready');
+    expect(s.error).toBeNull();
+    expect(s.results).toHaveLength(150);
+    expect(s.hasMore).toBe(true);
+  });
+
+  it('retrying load-more after a failure clears the error and appends', async () => {
+    let fail = true;
+    installFetch((url) => {
+      if (url.searchParams.get('offset') === '150' && fail) throw new TypeError('fetch failed');
+      return pageHandler(300)(url);
+    });
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get().loadMoreError).not.toBeNull();
+    fail = false;
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get()).toMatchObject({ loadMoreError: null });
+    expect(ex.exploreStore.get().results).toHaveLength(300);
+  });
+
+  it('reports how many stations the last load added', async () => {
+    installFetch(pageHandler(200));
+    ex.initExplore();
+    await settle();
+    ex.loadMore();
+    await settle();
+    expect(ex.exploreStore.get().addedLastPage).toBe(50);
+  });
+});
