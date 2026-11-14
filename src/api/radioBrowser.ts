@@ -23,8 +23,10 @@ const REQUEST_TIMEOUT_MS = 15000;
 export const SEARCH_PAGE_SIZE = 150;
 const TOP_UP_THRESHOLD = 20;
 const TOP_UP_LIMIT = 500;
-const NEAR_DEFAULT_LIMIT = 200;
-const NEAR_MAX_RADIUS_KM = 20000;
+/** Stations per near request: the most popular ones in the area. */
+const NEAR_LIMIT = 500;
+/** Search radii are rounded up to one of these, so nearby views share cache entries and requests. */
+const NEAR_RADIUS_BUCKETS_KM = [150, 300, 600, 1200, 2500] as const;
 const NEAR_CACHE_MAX = 50;
 /** Stations per map page. Page n starts at offset n x this size. */
 const MAP_PAGE_SIZE = 1000;
@@ -41,7 +43,17 @@ const TAG_HINT: Record<StationCategory, string> = {
 let hostsPromise: Promise<string[]> | null = null;
 let activeHost = 0;
 const mapPages = new Map<number, Promise<Station[]>>();
-const nearCache = new Map<string, Promise<Station[]>>();
+/** One near request shared by every caller with the same key. It is cancelled only when no caller waits for it. */
+interface NearRequest {
+  promise: Promise<Station[]>;
+  ctrl: AbortController;
+  /** Callers that passed a signal and have not aborted. */
+  waiters: number;
+  /** A caller without a signal waits for it, so it is never cancelled. */
+  pinned: boolean;
+  settled: boolean;
+}
+const nearCache = new Map<string, NearRequest>();
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -332,11 +344,6 @@ export function fetchMapStationsPage(page: number, signal?: AbortSignal): Promis
   return raceAbort(p, signal);
 }
 
-/** The first map page: the most popular stations with coordinates. See fetchMapStationsPage. */
-export function fetchMapStations(signal?: AbortSignal): Promise<Station[]> {
-  return fetchMapStationsPage(0, signal);
-}
-
 function isValidCoords(c: Coords): boolean {
   return Number.isFinite(c.lat) && Number.isFinite(c.lng) && Math.abs(c.lat) <= 90 && Math.abs(c.lng) <= 180;
 }
@@ -346,41 +353,102 @@ function snapToHalfDegree(v: number): number {
   return Math.round(v * 2) / 2;
 }
 
-/** Stations with coordinates within radiusKm of c, most popular first. Cached per 0.5 degree cell and radius. */
-export function fetchStationsNear(
-  c: Coords,
-  radiusKm: number,
-  limit: number = NEAR_DEFAULT_LIMIT,
-  signal?: AbortSignal,
-): Promise<Station[]> {
-  if (!isValidCoords(c)) return Promise.reject(new RadioApiError('parse', 'Invalid map position.'));
-  const km = Number.isFinite(radiusKm) ? Math.min(Math.max(radiusKm, 1), NEAR_MAX_RADIUS_KM) : 50;
+/** Smallest bucket that holds radiusKm; larger radii use the largest bucket. Non-finite radii use the smallest. */
+function nearRadiusBucketKm(radiusKm: number): number {
+  if (!Number.isFinite(radiusKm)) return NEAR_RADIUS_BUCKETS_KM[0];
+  return NEAR_RADIUS_BUCKETS_KM.find((b) => radiusKm <= b) ?? NEAR_RADIUS_BUCKETS_KM[NEAR_RADIUS_BUCKETS_KM.length - 1];
+}
+
+interface NearParams {
+  key: string;
+  lat: number;
+  lng: number;
+  km: number;
+  size: number;
+}
+
+function nearParams(c: Coords, radiusKm: number, limit: number): NearParams {
+  const km = nearRadiusBucketKm(radiusKm);
   const size = Math.max(1, Math.floor(limit));
   const lat = snapToHalfDegree(c.lat);
   const lng = snapToHalfDegree(c.lng);
-  const key = `${lat}|${lng}|${km}|${size}`;
+  return { key: `${lat}|${lng}|${km}|${size}`, lat, lng, km, size };
+}
 
-  let p = nearCache.get(key);
-  if (p === undefined) {
-    const req = apiList('/json/stations/search', {
-      geo_lat: String(lat),
-      geo_long: String(lng),
-      geo_distance: String(Math.round(km * 1000)),
+/**
+ * Cache key of the near request for c and radiusKm (snapped centre and radius bucket), or null for an invalid
+ * position. Two requests with the same key return the same stations.
+ */
+export function nearKey(c: Coords, radiusKm: number, limit: number = NEAR_LIMIT): string | null {
+  return isValidCoords(c) ? nearParams(c, radiusKm, limit).key : null;
+}
+
+function startNearRequest(p: NearParams): NearRequest {
+  const ctrl = new AbortController();
+  const promise = apiList(
+    '/json/stations/search',
+    {
+      geo_lat: String(p.lat),
+      geo_long: String(p.lng),
+      geo_distance: String(p.km * 1000),
       order: 'clickcount',
       reverse: 'true',
-      limit: String(size),
-    }).then((rows) => dedupeStations(toStations(rows).filter((s) => s.coords !== null)));
-    p = req;
-    nearCache.set(key, req);
-    req.catch(() => {
-      if (nearCache.get(key) === req) nearCache.delete(key);
-    });
-    if (nearCache.size > NEAR_CACHE_MAX) {
-      const oldest = nearCache.keys().next().value;
-      if (oldest !== undefined) nearCache.delete(oldest);
-    }
+      limit: String(p.size),
+    },
+    ctrl.signal,
+  ).then(
+    (rows) => {
+      req.settled = true;
+      return dedupeStations(toStations(rows).filter((s) => s.coords !== null));
+    },
+    (err: unknown) => {
+      req.settled = true;
+      throw err;
+    },
+  );
+  const req: NearRequest = { promise, ctrl, waiters: 0, pinned: false, settled: false };
+  nearCache.set(p.key, req);
+  promise.catch(() => {
+    if (nearCache.get(p.key) === req) nearCache.delete(p.key);
+  });
+  if (nearCache.size > NEAR_CACHE_MAX) {
+    const oldest = nearCache.keys().next().value;
+    if (oldest !== undefined) nearCache.delete(oldest);
   }
-  return raceAbort(p, signal);
+  return req;
+}
+
+/**
+ * Stations with coordinates within the radius bucket of c, most popular first (at most `limit`).
+ * Cached by nearKey. An aborted caller is detached at once; the request itself is cancelled only when no
+ * other caller waits for it, and then its cache entry is dropped.
+ */
+export function fetchStationsNear(
+  c: Coords,
+  radiusKm: number,
+  limit: number = NEAR_LIMIT,
+  signal?: AbortSignal,
+): Promise<Station[]> {
+  if (!isValidCoords(c)) return Promise.reject(new RadioApiError('parse', 'Invalid map position.'));
+  if (signal?.aborted) return Promise.reject(cancelled());
+  const params = nearParams(c, radiusKm, limit);
+  const req = nearCache.get(params.key) ?? startNearRequest(params);
+  if (signal === undefined) {
+    req.pinned = true;
+  } else {
+    req.waiters += 1;
+    signal.addEventListener(
+      'abort',
+      () => {
+        req.waiters -= 1;
+        if (req.waiters > 0 || req.pinned || req.settled) return;
+        req.ctrl.abort();
+        if (nearCache.get(params.key) === req) nearCache.delete(params.key);
+      },
+      { once: true },
+    );
+  }
+  return raceAbort(req.promise, signal);
 }
 
 /** Counts a station play, as the Radio Browser docs request. Fire-and-forget; never throws. */

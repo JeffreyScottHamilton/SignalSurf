@@ -4,7 +4,7 @@ SignalSurf is a web app for finding and playing live internet radio stations on 
 
 ## Features
 
-- World map with station markers, grouped into clusters. The 1000 most-clicked stations with coordinates load at start, then 4000 more (pages 1 to 4) load in the background (unless data-saver or a 2G connection is set), and nearby stations load as you zoom in from zoom 4.
+- World map with station markers, grouped into clusters. The 1000 most-clicked stations with coordinates load at start. From zoom 3 the map then loads up to 500 of the most-clicked stations for the area in view, cached per area, and stations found by search that have coordinates are drawn on the map too.
 - Station search by name, city or country, with category filters: All, Music, News, Talk and Sports.
 - "Load more stations" under the list fetches the next page of results on demand (150 at a time, using the API's `offset`), and nothing is stored between presses.
 - Playback of live streams with play and pause, previous and next through the list you started from, volume and mute. The player shows "Live" only after the browser reports that the stream is playing.
@@ -58,7 +58,7 @@ Station data is public domain according to the Radio Browser site. Map shapes co
 - Some stations do not play in a browser. Common causes are a stream format the browser cannot decode, a stream that refuses browser playback, a region restriction, or a station that has gone offline. The player shows a message when this happens.
 - Category filters are approximate. They are based on the free-text tags that stations provide, so a station can be missing from a category or appear in one it does not fit.
 - Only stations with coordinates appear on the map. Stations without coordinates are listed and can be played, but are never placed on the map.
-- The map loads the most-clicked stations first (1000, then up to 4000 more in the background), plus nearby stations as you zoom in, so it is not a complete index.
+- The map starts with the 1000 most-clicked stations with coordinates, then adds up to 500 per area as you move and zoom (from zoom 3). It is not a complete index: an area shows its most-clicked stations, not every station in it.
 - Favourites and history are stored in this browser's `localStorage`. They are not synced between devices or browsers.
 - The app does not show song titles or other track metadata. It shows the station name and the playback status.
 - Station details come from Radio Browser's volunteer-maintained records and can be wrong. For example, one sampled station had a latitude outside the valid range; the app drops such coordinates but cannot detect a swapped pair (see [docs/data-source.md](docs/data-source.md)).

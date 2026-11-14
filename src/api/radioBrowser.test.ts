@@ -271,13 +271,13 @@ describe('server selection', () => {
   });
 });
 
-describe('fetchMapStations', () => {
+describe('fetchMapStationsPage starting set (page 0)', () => {
   it('requests geo stations once per session and keeps only those with coords', async () => {
     installFetch(() =>
       json([rec('g1', { geo_lat: 52.5, geo_long: 13.4 }), rec('n1'), rec('g2', { geo_lat: 0, geo_long: 0 })]),
     );
-    const first = await api.fetchMapStations();
-    const second = await api.fetchMapStations();
+    const first = await api.fetchMapStationsPage(0);
+    const second = await api.fetchMapStationsPage(0);
     expect(first.map((s) => s.id)).toEqual(['g1']);
     expect(second).toBe(first);
     const search = searchCalls();
@@ -294,7 +294,7 @@ describe('fetchMapStations', () => {
         rec('mapped', { url_resolved: 'https://stream.test/shared', geo_lat: 1, geo_long: 2 }),
       ]),
     );
-    const out = await api.fetchMapStations();
+    const out = await api.fetchMapStationsPage(0);
     expect(out.map((s) => s.id)).toEqual(['mapped']);
   });
 
@@ -304,22 +304,53 @@ describe('fetchMapStations', () => {
       if (fail) throw new TypeError('fetch failed');
       return json([rec('g1', { geo_lat: 1, geo_long: 2 })]);
     });
-    await expect(api.fetchMapStations()).rejects.toMatchObject({ kind: 'network' });
+    await expect(api.fetchMapStationsPage(0)).rejects.toMatchObject({ kind: 'network' });
     fail = false;
-    const out = await api.fetchMapStations();
+    const out = await api.fetchMapStationsPage(0);
     expect(out.map((s) => s.id)).toEqual(['g1']);
   });
 });
 
 describe('fetchStationsNear', () => {
-  it('sends the position, distance in metres, and the default limit', async () => {
+  it('sends the position, the radius bucket in metres, the 500 limit, and popularity order', async () => {
     installFetch(() => json([]));
     await api.fetchStationsNear({ lat: 52.5, lng: 13.5 }, 50);
     const u = searchCalls()[0];
     expect(param(u, 'geo_lat')).toBe('52.5');
     expect(param(u, 'geo_long')).toBe('13.5');
-    expect(param(u, 'geo_distance')).toBe('50000');
-    expect(param(u, 'limit')).toBe('200');
+    expect(param(u, 'geo_distance')).toBe('150000');
+    expect(param(u, 'limit')).toBe('500');
+    expect(param(u, 'order')).toBe('clickcount');
+    expect(param(u, 'reverse')).toBe('true');
+    expect(param(u, 'has_geo_info')).toBeNull();
+  });
+
+  it.each([
+    [1, 150],
+    [150, 150],
+    [151, 300],
+    [300, 300],
+    [301, 600],
+    [600, 600],
+    [601, 1200],
+    [1200, 1200],
+    [1201, 2500],
+    [2500, 2500],
+    [9000, 2500],
+  ])('rounds a radius of %s km up to the %s km bucket in the request', async (km, bucket) => {
+    installFetch(() => json([]));
+    await api.fetchStationsNear({ lat: 10, lng: 10 }, km);
+    expect(param(searchCalls()[0], 'geo_distance')).toBe(String(bucket * 1000));
+  });
+
+  it('keys the cache by radius bucket: radii in the same bucket share one request', async () => {
+    installFetch(() => json([]));
+    await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 200);
+    await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 290);
+    expect(searchCalls()).toHaveLength(1);
+    await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 310);
+    expect(searchCalls()).toHaveLength(2);
+    expect(param(searchCalls()[1], 'geo_distance')).toBe('600000');
   });
 
   it('snaps the request centre to a 0.5 degree grid, the same centre the cache key uses', async () => {
@@ -330,13 +361,19 @@ describe('fetchStationsNear', () => {
     expect(param(u, 'geo_long')).toBe('13');
   });
 
-  it('caches by position snapped to 0.5 degrees and by radius', async () => {
+  it('caches by position snapped to 0.5 degrees and by radius bucket', async () => {
     installFetch(() => json([rec('g1', { geo_lat: 52.5, geo_long: 13.4 })]));
     await api.fetchStationsNear({ lat: 52.4, lng: 13.2 }, 50);
     await api.fetchStationsNear({ lat: 52.3, lng: 13.1 }, 50);
     expect(searchCalls()).toHaveLength(1);
-    await api.fetchStationsNear({ lat: 52.3, lng: 13.1 }, 100);
+    await api.fetchStationsNear({ lat: 52.3, lng: 13.1 }, 400);
     expect(searchCalls()).toHaveLength(2);
+  });
+
+  it('exposes the cache key with the bucketed radius, or null for an invalid position', () => {
+    expect(api.nearKey({ lat: 52.4, lng: 13.2 }, 200)).toBe(api.nearKey({ lat: 52.3, lng: 13.1 }, 290));
+    expect(api.nearKey({ lat: 52.4, lng: 13.2 }, 200)).not.toBe(api.nearKey({ lat: 52.4, lng: 13.2 }, 400));
+    expect(api.nearKey({ lat: 120, lng: 0 }, 200)).toBeNull();
   });
 
   it('does not share a cached answer between areas half a degree apart', async () => {
@@ -346,6 +383,57 @@ describe('fetchStationsNear', () => {
     expect(searchCalls()).toHaveLength(2);
     expect(north.map((s) => s.id)).toEqual(['at-52.5']);
     expect(south.map((s) => s.id)).toEqual(['at-53']);
+  });
+
+  it('cancels the request on the wire when its only caller aborts', async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        calls.push(url);
+        if (url.hostname === DISCOVERY_HOST) return Promise.resolve(json([{ ip: '10.0.0.1', name: DE1 }]));
+        requestSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener('abort', () => reject(new TypeError('aborted')));
+        });
+      }),
+    );
+    const ctrl = new AbortController();
+    const p = api.fetchStationsNear({ lat: 52.5, lng: 13.5 }, 50, undefined, ctrl.signal);
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+    ctrl.abort();
+    await expect(p).rejects.toMatchObject({ kind: 'aborted' });
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it('keeps the shared request running while another caller still waits for it', async () => {
+    let requestSignal: AbortSignal | undefined;
+    let answer: ((r: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        calls.push(url);
+        if (url.hostname === DISCOVERY_HOST) return Promise.resolve(json([{ ip: '10.0.0.1', name: DE1 }]));
+        requestSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve) => {
+          answer = resolve;
+        });
+      }),
+    );
+    const first = new AbortController();
+    const second = new AbortController();
+    const p1 = api.fetchStationsNear({ lat: 52.5, lng: 13.5 }, 50, undefined, first.signal);
+    const p2 = api.fetchStationsNear({ lat: 52.5, lng: 13.5 }, 50, undefined, second.signal);
+    await vi.waitFor(() => expect(answer).toBeDefined());
+    expect(searchCalls()).toHaveLength(1);
+    first.abort();
+    await expect(p1).rejects.toMatchObject({ kind: 'aborted' });
+    expect(requestSignal?.aborted).toBe(false);
+    answer?.(json([rec('shared', { geo_lat: 52.5, geo_long: 13.5 })]));
+    const out = await p2;
+    expect(out.map((s) => s.id)).toEqual(['shared']);
   });
 
   it('drops stations without coordinates before dedupe, so a coord-less copy cannot hide the mapped one', async () => {
@@ -494,14 +582,6 @@ describe('fetchMapStationsPage', () => {
     expect(p1.map((s) => s.id)).toEqual(['p1000']);
     expect(p2.map((s) => s.id)).toEqual(['p2000']);
     expect(searchCalls()).toHaveLength(2);
-  });
-
-  it('keeps page 0 identical to fetchMapStations, and shares its cache', async () => {
-    installFetch(() => json([rec('g1', { geo_lat: 52.5, geo_long: 13.4 })]));
-    const viaPage = await api.fetchMapStationsPage(0);
-    const viaMap = await api.fetchMapStations();
-    expect(viaMap).toBe(viaPage);
-    expect(searchCalls()).toHaveLength(1);
   });
 
   it('drops stations without coordinates on every page, before dedupe', async () => {

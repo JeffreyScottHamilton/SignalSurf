@@ -61,36 +61,70 @@ function pagesHandler(pages: Record<number, Record<string, unknown>[] | 'fail'>)
   };
 }
 
-function setConnection(value: unknown): void {
-  Object.defineProperty(navigator, 'connection', { value, configurable: true });
-}
-
 beforeEach(async () => {
   calls = [];
   vi.resetModules();
-  // Idle callbacks run on the next task, so background pages are quick and deterministic in tests.
-  vi.stubGlobal('requestIdleCallback', (cb: () => void) => setTimeout(cb, 0));
   md = await import('./mapData');
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  Reflect.deleteProperty(navigator, 'connection');
 });
 
+/** Lets pending promise callbacks run. Uses the real timer, captured before fake timers are installed. */
+const realSetTimeout = globalThis.setTimeout;
+async function settle(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 500 && !cond(); i++) await new Promise((r) => realSetTimeout(r, 0));
+  expect(cond()).toBe(true);
+}
+
+/** Records each change of nearStatus, starting from idle. */
+function recordNearTransitions(): string[] {
+  const seen: string[] = [];
+  let last = 'idle';
+  md.mapStore.subscribe(() => {
+    const now = md.mapStore.get().nearStatus;
+    if (now === last) return;
+    last = now;
+    seen.push(now);
+  });
+  return seen;
+}
+
+/** Near requests seen so far (geo_distance set). */
+function nearCalls(): URL[] {
+  return calls.filter((u) => u.searchParams.has('geo_distance'));
+}
+
 describe('mapStore', () => {
-  it('starts idle with no stations', () => {
-    expect(md.mapStore.get()).toEqual({ stations: [], status: 'idle', backgroundStatus: 'idle' });
+  it('starts idle with no stations and no nearby request in flight', () => {
+    expect(md.mapStore.get()).toEqual({ stations: [], status: 'idle', nearStatus: 'idle' });
   });
 
-  it('initMapData loads popular geo stations once', async () => {
+  it('initMapData loads the popular geo stations (page 0) once', async () => {
     installFetch(() => json([geoRec('g1', 52.5, 13.4), geoRec('g2', 0, 0)]));
     md.initMapData();
     md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
+    await vi.waitFor(() => expect(md.mapStore.get().status).toBe('ready'));
     expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['g1']);
-    expect(geoOffsets().filter((o) => o === '0')).toHaveLength(1);
+    expect(geoOffsets()).toEqual(['0']);
+  });
+
+  it('makes no background requests after init: only page 0 is loaded', async () => {
+    installFetch(
+      pagesHandler({
+        0: [geoRec('a', 1, 1)],
+        1000: [geoRec('b', 2, 2)],
+        2000: [geoRec('c', 3, 3)],
+      }),
+    );
+    md.initMapData();
+    await vi.waitFor(() => expect(md.mapStore.get().status).toBe('ready'));
+    await new Promise((r) => realSetTimeout(r, 50));
+    expect(geoOffsets()).toEqual(['0']);
+    expect(calls.filter((u) => u.pathname === '/json/stations/search')).toHaveLength(1);
+    expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['a']);
   });
 
   it('initMapData reports an error and retries on the next call', async () => {
@@ -103,8 +137,7 @@ describe('mapStore', () => {
     await vi.waitFor(() => expect(md.mapStore.get().status).toBe('error'));
     fail = false;
     md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    expect(md.mapStore.get().status).toBe('ready');
+    await vi.waitFor(() => expect(md.mapStore.get().status).toBe('ready'));
     expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['g1']);
   });
 
@@ -126,9 +159,14 @@ describe('mapStore', () => {
       const batch = Array.from({ length: 200 }, (_, k) => geoRec(`${lat}-${k}`, 1, 1));
       return json(batch);
     });
-    for (let i = 0; i < 41; i++) md.loadNear({ lat: -80 + i * 4, lng: 0 }, 50);
-    await vi.waitFor(() => expect(md.mapStore.get().stations.length).toBe(8000));
+    // One request at a time: a new near request aborts the one in flight.
+    for (let i = 0; i < 41; i++) {
+      const lat = -80 + i * 4;
+      md.loadNear({ lat, lng: 0 }, 50);
+      await settle(() => md.mapStore.get().stations.some((s) => s.id === `${lat}-199`));
+    }
     const ids = md.mapStore.get().stations.map((s) => s.id);
+    expect(ids).toHaveLength(8000);
     expect(ids.includes('-80-0')).toBe(false);
     expect(ids.at(-1)).toBe('80-199');
   });
@@ -138,177 +176,154 @@ describe('mapStore', () => {
       throw new TypeError('fetch failed');
     });
     expect(() => md.loadNear({ lat: 1, lng: 1 }, 50)).not.toThrow();
-    await vi.waitFor(() => expect(calls.some((u) => u.searchParams.get('geo_lat') === '1')).toBe(true));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(md.mapStore.get()).toEqual({ stations: [], status: 'idle', backgroundStatus: 'idle' });
+    await settle(() => calls.some((u) => u.searchParams.get('geo_lat') === '1'));
+    await new Promise((r) => realSetTimeout(r, 0));
+    expect(md.mapStore.get()).toEqual({ stations: [], status: 'idle', nearStatus: 'idle' });
   });
 });
 
-describe('background map pages', () => {
-  it('loads pages 1 to 4 after page 0, merged by id and deduped', async () => {
-    installFetch(
-      pagesHandler({
-        0: [geoRec('a', 1, 1), geoRec('b', 2, 2)],
-        1000: [geoRec('b', 2, 2), geoRec('c', 3, 3)],
-        2000: [geoRec('d', 4, 4), geoRec('c', 3, 3)],
-        3000: [geoRec('e', 5, 5), geoRec('d', 4, 4)],
-        4000: [geoRec('f', 6, 6)],
+describe('loadNear requests', () => {
+  it('asks for the radius bucket, 500 stations, most popular first', async () => {
+    installFetch(() => json([]));
+    md.loadNear({ lat: 48.2, lng: 16.4 }, 420);
+    await settle(() => nearCalls().length === 1);
+    const u = nearCalls()[0];
+    expect(u.searchParams.get('geo_distance')).toBe('600000');
+    expect(u.searchParams.get('limit')).toBe('500');
+    expect(u.searchParams.get('order')).toBe('clickcount');
+    expect(u.searchParams.get('reverse')).toBe('true');
+  });
+
+  it('skips the request when the snapped centre and radius bucket were already loaded', async () => {
+    installFetch(() => json([geoRec('a', 48, 16)]));
+    md.loadNear({ lat: 48.2, lng: 16.2 }, 200);
+    await settle(() => md.mapStore.get().stations.length === 1);
+    // Same snapped centre (48, 16) and same bucket (300 km): no request.
+    md.loadNear({ lat: 48.1, lng: 16.1 }, 290);
+    await new Promise((r) => realSetTimeout(r, 20));
+    expect(nearCalls()).toHaveLength(1);
+    md.loadNear({ lat: 48.1, lng: 16.1 }, 700);
+    await settle(() => nearCalls().length === 2);
+    expect(nearCalls()[1].searchParams.get('geo_distance')).toBe('1200000');
+  });
+
+  it('does not skip a failed request, so moving back retries it', async () => {
+    let fail = true;
+    installFetch(() => {
+      if (fail) throw new TypeError('fetch failed');
+      return json([geoRec('a', 48, 16)]);
+    });
+    md.loadNear({ lat: 48, lng: 16 }, 200);
+    // Both attempts of the failed request (one retry on the next server) have been made.
+    await settle(() => nearCalls().length === 2);
+    await new Promise((r) => realSetTimeout(r, 20));
+    fail = false;
+    md.loadNear({ lat: 48, lng: 16 }, 200);
+    await settle(() => md.mapStore.get().stations.length === 1);
+    expect(nearCalls()).toHaveLength(3);
+  });
+
+  it('aborts the previous near request when a new one starts, and never merges its stations', async () => {
+    const signals = new Map<string, AbortSignal>();
+    const release: Record<string, (r: Response) => void> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        calls.push(url);
+        if (url.hostname === DISCOVERY_HOST) return Promise.resolve(json([{ ip: '10.0.0.1', name: DE1 }]));
+        const lat = url.searchParams.get('geo_lat') ?? '';
+        if (init?.signal) signals.set(lat, init.signal);
+        return new Promise<Response>((resolve) => {
+          release[lat] = resolve;
+        });
       }),
     );
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    const state = md.mapStore.get();
-    expect(state.status).toBe('ready');
-    expect(state.stations.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
-    expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
+    md.loadNear({ lat: 10, lng: 10 }, 200);
+    await settle(() => signals.has('10'));
+    md.loadNear({ lat: 30, lng: 30 }, 200);
+    await settle(() => signals.has('30'));
+    expect(signals.get('10')?.aborted).toBe(true);
+    expect(signals.get('30')?.aborted).toBe(false);
+    // The stale answer arrives late: it must not reach the store.
+    release['10'](json([geoRec('stale', 10, 10)]));
+    release['30'](json([geoRec('fresh', 30, 30)]));
+    await settle(() => md.mapStore.get().stations.length === 1);
+    expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['fresh']);
+    expect(md.mapStore.get().nearStatus).toBe('idle');
   });
+});
 
-  it('requests 5 pages in total, 1000 stations each, and no page after the last', async () => {
-    installFetch(
-      pagesHandler({
-        0: [geoRec('p0', 1, 1)],
-        1000: [geoRec('p1', 1, 1)],
-        2000: [geoRec('p2', 1, 1)],
-        3000: [geoRec('p3', 1, 1)],
-        4000: [geoRec('p4', 1, 1)],
-        5000: [geoRec('p5', 1, 1)],
+describe('nearStatus', () => {
+  /** Answers near requests by hand, so the test controls when they finish. Keyed by the request's latitude. */
+  function manualNear(): Record<string, (r: Response) => void> {
+    const release: Record<string, (r: Response) => void> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        calls.push(url);
+        if (url.hostname === DISCOVERY_HOST) return Promise.resolve(json([{ ip: '10.0.0.1', name: DE1 }]));
+        return new Promise<Response>((resolve) => {
+          release[url.searchParams.get('geo_lat') ?? ''] = resolve;
+        });
       }),
     );
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
-    expect(md.mapStore.get().stations).toHaveLength(5);
-  });
+    return release;
+  }
 
-  it('starts each page through requestIdleCallback', async () => {
-    const idle = vi.fn((cb: () => void) => setTimeout(cb, 0));
-    vi.stubGlobal('requestIdleCallback', idle);
-    installFetch(
-      pagesHandler({
-        0: [geoRec('a', 1, 1)],
-        1000: [geoRec('b', 2, 2)],
-        2000: [geoRec('c', 3, 3)],
-        3000: [geoRec('d', 4, 4)],
-        4000: [geoRec('e', 5, 5)],
-      }),
-    );
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    expect(idle).toHaveBeenCalledTimes(4);
-  });
-
-  it('stops when a page adds no new stations', async () => {
-    installFetch(
-      pagesHandler({
-        0: [geoRec('a', 1, 1)],
-        1000: [geoRec('a', 1, 1)],
-        2000: [geoRec('z', 9, 9)],
-      }),
-    );
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['a']);
-    expect(geoOffsets()).toEqual(['0', '1000']);
-  });
-
-  it('a failure on page 1 keeps page 0, ends as done without an error status, and stops', async () => {
-    installFetch(pagesHandler({ 0: [geoRec('a', 1, 1), geoRec('b', 2, 2)], 1000: 'fail', 2000: [geoRec('c', 3, 3)] }));
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    const state = md.mapStore.get();
-    expect(state.status).toBe('ready');
-    expect(state.stations.map((s) => s.id)).toEqual(['a', 'b']);
-    expect(geoOffsets()).toEqual(['0', '1000', '1000']);
-  });
-
-  it('does not start background loading when page 0 fails', async () => {
-    installFetch(pagesHandler({ 0: 'fail', 1000: [geoRec('b', 2, 2)] }));
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().status).toBe('error'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(md.mapStore.get().backgroundStatus).toBe('idle');
-    expect(geoOffsets()).not.toContain('1000');
-  });
-
-  it.each([
-    ['saveData', { saveData: true }],
-    ['2g', { effectiveType: '2g' }],
-    ['slow-2g', { effectiveType: 'slow-2g' }],
-  ])('skips background loading when the connection is %s', async (_name, connection) => {
-    setConnection(connection);
-    installFetch(pagesHandler({ 0: [geoRec('a', 1, 1)], 1000: [geoRec('b', 2, 2)] }));
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('skipped'));
-    expect(md.mapStore.get().status).toBe('ready');
-    expect(geoOffsets()).toEqual(['0']);
-  });
-
-  it('keeps background loading on a fast connection that is not data-saving', async () => {
-    setConnection({ saveData: false, effectiveType: '4g' });
-    installFetch(pagesHandler({ 0: [geoRec('a', 1, 1)], 1000: [geoRec('b', 2, 2)] }));
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['a', 'b']);
-  });
-
-  it('initMapData called again loads each page once', async () => {
-    installFetch(
-      pagesHandler({
-        0: [geoRec('a', 1, 1)],
-        1000: [geoRec('b', 2, 2)],
-        2000: [geoRec('c', 3, 3)],
-        3000: [geoRec('d', 4, 4)],
-        4000: [geoRec('e', 5, 5)],
-      }),
-    );
-    md.initMapData();
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().status).toBe('ready'));
-    md.initMapData();
-    await vi.waitFor(() => expect(md.mapStore.get().backgroundStatus).toBe('done'));
-    md.initMapData();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
-    expect(md.mapStore.get().stations.map((s) => s.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
-  });
-
-  it('waits for the 1500 ms fallback timer before each page when requestIdleCallback is missing', async () => {
+  it('shows loading only after a near request has been in flight for more than 400 ms, and clears it when done', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      vi.stubGlobal('requestIdleCallback', undefined);
-      installFetch(
-        pagesHandler({
-          0: [geoRec('a', 1, 1)],
-          1000: [geoRec('b', 2, 2)],
-          2000: [geoRec('c', 3, 3)],
-          3000: [geoRec('d', 4, 4)],
-          4000: [geoRec('e', 5, 5)],
-        }),
-      );
-      md.initMapData();
-      await settle(() => md.mapStore.get().status === 'ready');
-      expect(geoOffsets()).toEqual(['0']);
-      await vi.advanceTimersByTimeAsync(1499);
-      expect(geoOffsets()).toEqual(['0']);
-      await vi.advanceTimersByTimeAsync(1);
-      await settle(() => geoOffsets().length === 2);
-      expect(geoOffsets()).toEqual(['0', '1000']);
-      for (let page = 2; page <= 4; page++) {
-        await vi.advanceTimersByTimeAsync(1500);
-        await settle(() => geoOffsets().length === page + 1);
-      }
-      await settle(() => md.mapStore.get().backgroundStatus === 'done');
-      expect(geoOffsets()).toEqual(['0', '1000', '2000', '3000', '4000']);
+      const release = manualNear();
+      const seen = recordNearTransitions();
+      md.loadNear({ lat: 10, lng: 10 }, 200);
+      await settle(() => release['10'] !== undefined);
+      expect(md.mapStore.get().nearStatus).toBe('idle');
+      await vi.advanceTimersByTimeAsync(399);
+      expect(md.mapStore.get().nearStatus).toBe('idle');
+      await vi.advanceTimersByTimeAsync(2);
+      expect(md.mapStore.get().nearStatus).toBe('loading');
+      release['10'](json([geoRec('a', 10, 10)]));
+      await settle(() => md.mapStore.get().nearStatus === 'idle');
+      expect(seen).toEqual(['loading', 'idle']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never shows loading for a request that finishes within 400 ms', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const release = manualNear();
+      const seen = recordNearTransitions();
+      md.loadNear({ lat: 10, lng: 10 }, 200);
+      await settle(() => release['10'] !== undefined);
+      await vi.advanceTimersByTimeAsync(200);
+      release['10'](json([geoRec('a', 10, 10)]));
+      await settle(() => md.mapStore.get().stations.length === 1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(seen).not.toContain('loading');
+      expect(md.mapStore.get().nearStatus).toBe('idle');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows nothing on failure: the status returns to idle and no error is stored', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const release = manualNear();
+      md.loadNear({ lat: 10, lng: 10 }, 200);
+      await settle(() => release['10'] !== undefined);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(md.mapStore.get().nearStatus).toBe('loading');
+      // A 400 is not retried on another server, so one answer settles the request as a failure.
+      release['10'](new Response('nope', { status: 400 }));
+      await settle(() => md.mapStore.get().nearStatus === 'idle');
+      expect(md.mapStore.get()).toEqual({ stations: [], status: 'idle', nearStatus: 'idle' });
     } finally {
       vi.useRealTimers();
     }
   });
 });
-
-/** Lets pending promise callbacks run. Uses the real timer, captured before fake timers are installed. */
-const realSetTimeout = globalThis.setTimeout;
-async function settle(cond: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !cond(); i++) await new Promise((r) => realSetTimeout(r, 0));
-  expect(cond()).toBe(true);
-}

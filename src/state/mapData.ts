@@ -1,30 +1,24 @@
 import { createStore, type Store } from '@/lib/createStore';
-import { fetchMapStationsPage, fetchStationsNear } from '@/api/radioBrowser';
+import { fetchMapStationsPage, fetchStationsNear, nearKey } from '@/api/radioBrowser';
 import type { Coords, LoadStatus, Station } from '@/types';
 
-/**
- * Progress of the background pages after page 0. 'skipped' when data-saver or a 2G connection is set.
- * A failed background page ends as 'done' and keeps what is loaded.
- */
-export type BackgroundStatus = 'idle' | 'loading' | 'done' | 'skipped';
+/** 'loading' only while a nearby request has been in flight for more than NEAR_CHIP_DELAY_MS. */
+export type NearStatus = 'idle' | 'loading';
 
 export interface MapDataState {
   stations: Station[];
   status: LoadStatus;
-  backgroundStatus: BackgroundStatus;
+  nearStatus: NearStatus;
 }
 
 const CAP = 8000;
-/** Pages loaded in the background after page 0 (1000 stations each), so 5 pages (5000 stations) in total. */
-const BACKGROUND_PAGE_COUNT = 4;
-const BACKGROUND_PAGES: readonly number[] = Array.from({ length: BACKGROUND_PAGE_COUNT }, (_, i) => i + 1);
-/** Start delay when requestIdleCallback is missing, and the idle deadline when it is present. */
-const IDLE_FALLBACK_MS = 1500;
+/** A nearby request shows its status chip only after this long, so quick answers never flash it. */
+const NEAR_CHIP_DELAY_MS = 400;
 
 export const mapStore: Store<MapDataState> = createStore<MapDataState>({
   stations: [],
   status: 'idle',
-  backgroundStatus: 'idle',
+  nearStatus: 'idle',
 });
 
 /** Merges by id (incoming wins, moves to the end) and keeps the newest CAP entries. */
@@ -39,77 +33,63 @@ function mergeStations(prev: Station[], incoming: Station[]): Station[] {
   return all.length > CAP ? all.slice(all.length - CAP) : all;
 }
 
-function saveDataOrSlow(): boolean {
-  const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
-  return conn?.saveData === true || conn?.effectiveType === 'slow-2g' || conn?.effectiveType === '2g';
-}
-
-/** Runs `task` when the browser is idle; falls back to a plain timer where requestIdleCallback is missing. */
-function whenIdle(task: () => void): void {
-  if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(task, { timeout: IDLE_FALLBACK_MS });
-  } else {
-    setTimeout(task, IDLE_FALLBACK_MS);
-  }
-}
-
-function setBackgroundStatus(backgroundStatus: BackgroundStatus): void {
-  mapStore.set((prev) => ({ ...prev, backgroundStatus }));
-}
-
-/** Loads the next page when the browser is idle. Stops at the first failure or page that adds no new station. */
-function loadBackgroundPages(pages: readonly number[]): void {
-  const [page, ...rest] = pages;
-  if (page === undefined) {
-    setBackgroundStatus('done');
-    return;
-  }
-  whenIdle(() => {
-    fetchMapStationsPage(page).then(
-      (list) => {
-        const known = new Set(mapStore.get().stations.map((s) => s.id));
-        const addsNew = list.some((s) => !known.has(s.id));
-        mapStore.set((prev) => ({ ...prev, stations: mergeStations(prev.stations, list) }));
-        if (addsNew) loadBackgroundPages(rest);
-        else setBackgroundStatus('done');
-      },
-      () => setBackgroundStatus('done'),
-    );
-  });
-}
-
-/** Starts the background pages once. Skipped on data-saver or 2G connections. */
-function startBackground(): void {
-  if (mapStore.get().backgroundStatus !== 'idle') return;
-  if (saveDataOrSlow()) {
-    setBackgroundStatus('skipped');
-    return;
-  }
-  setBackgroundStatus('loading');
-  loadBackgroundPages(BACKGROUND_PAGES);
-}
-
-/**
- * Loads the popular world-wide stations with coordinates (page 0), then the background pages.
- * Retries page 0 after a failure; no-op while loading or loaded. Background loading starts once.
- */
+/** Loads the popular world-wide stations with coordinates (page 0). Nothing else is loaded up front. */
 export function initMapData(): void {
   const { status } = mapStore.get();
   if (status === 'loading' || status === 'ready') return;
   mapStore.set((prev) => ({ ...prev, status: 'loading' }));
   fetchMapStationsPage(0).then(
-    (list) => {
-      mapStore.set((prev) => ({ ...prev, stations: mergeStations(prev.stations, list), status: 'ready' }));
-      startBackground();
-    },
+    (list) => mapStore.set((prev) => ({ ...prev, stations: mergeStations(prev.stations, list), status: 'ready' })),
     () => mapStore.set((prev) => ({ ...prev, status: 'error' })),
   );
 }
 
-/** Adds stations near a point to the map. Failures are ignored; the map keeps what it has. */
+/** The nearby request in flight, if any. Only the latest one may update the store. */
+let nearCtrl: AbortController | null = null;
+let nearTimer: ReturnType<typeof setTimeout> | undefined;
+/** Keys (snapped centre and radius bucket) whose stations are already on the map. */
+const loadedNear = new Set<string>();
+
+function setNearStatus(nearStatus: NearStatus): void {
+  mapStore.set((prev) => (prev.nearStatus === nearStatus ? prev : { ...prev, nearStatus }));
+}
+
+/**
+ * Adds the most popular stations near a point to the map. A new call aborts the one in flight.
+ * An area already loaded (same snapped centre and radius bucket) is not requested again.
+ * Failures are ignored; the map keeps what it has.
+ */
 export function loadNear(c: Coords, radiusKm: number): void {
-  fetchStationsNear(c, radiusKm).then(
-    (list) => mapStore.set((prev) => ({ ...prev, stations: mergeStations(prev.stations, list) })),
-    () => undefined,
+  nearCtrl?.abort();
+  nearCtrl = null;
+  clearTimeout(nearTimer);
+  setNearStatus('idle');
+  const key = nearKey(c, radiusKm);
+  if (key === null || loadedNear.has(key)) return;
+
+  const ctrl = new AbortController();
+  nearCtrl = ctrl;
+  nearTimer = setTimeout(() => {
+    if (nearCtrl === ctrl) setNearStatus('loading');
+  }, NEAR_CHIP_DELAY_MS);
+
+  /** Ends this request's status. False when a newer request has replaced it. */
+  const finish = (): boolean => {
+    if (nearCtrl !== ctrl) return false;
+    nearCtrl = null;
+    clearTimeout(nearTimer);
+    setNearStatus('idle');
+    return true;
+  };
+
+  fetchStationsNear(c, radiusKm, undefined, ctrl.signal).then(
+    (list) => {
+      if (!finish()) return;
+      loadedNear.add(key);
+      mapStore.set((prev) => ({ ...prev, stations: mergeStations(prev.stations, list) }));
+    },
+    () => {
+      finish();
+    },
   );
 }

@@ -26,13 +26,12 @@ export interface MapController {
 const ATTRIBUTION = 'Stations: Radio Browser · Map: Natural Earth';
 const WORLD_BOUNDS = L.latLngBounds([-75, -185], [85, 185]);
 const MAX_ZOOM = 8;
-// Nearby stations load from this zoom on. Below it the map shows only the popular world-wide set.
-const PROGRESS_MIN_ZOOM = 4;
+// Nearby stations load from this zoom on. Below it the map shows only the popular world-wide starting set.
+const NEAR_MIN_ZOOM = 3;
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
 const FOCUS_MIN_ZOOM = 5;
 const FOCUS_MAX_ZOOM = 6;
 const LOAD_DEBOUNCE_MS = 600;
-const MAX_RADIUS_KM = 600;
 const START_CENTER: [number, number] = [20, 10];
 const NARROW_PANEL_PX = 768;
 const NARROW_EXTRA_ZOOM = 0.5;
@@ -303,14 +302,15 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
   map.on('zoomend', emitZoom);
 
+  /** After the map rests: asks for the most popular stations around the centre. */
   function scheduleLoad() {
     clearTimeout(loadTimer);
-    if (map.getZoom() < PROGRESS_MIN_ZOOM) return;
+    if (map.getZoom() < NEAR_MIN_ZOOM) return;
     loadTimer = setTimeout(() => {
-      if (disposed || map.getZoom() < PROGRESS_MIN_ZOOM) return;
+      if (disposed || map.getZoom() < NEAR_MIN_ZOOM) return;
       const c = map.getCenter();
-      const ne = map.getBounds().getNorthEast();
-      const km = Math.min(MAX_RADIUS_KM, Math.max(1, Math.ceil(map.distance(c, ne) / 1000)));
+      // Centre to corner: half the visible diagonal. mapData rounds it to a radius bucket, at most 2500 km.
+      const km = Math.max(1, Math.ceil(map.distance(c, map.getBounds().getNorthEast()) / 1000));
       loadNear({ lat: Math.max(-85, Math.min(85, c.lat)), lng: wrapLng(c.lng) }, km);
     }, LOAD_DEBOUNCE_MS);
   }

@@ -13,6 +13,7 @@ import { mergeMarkerStations } from './markerSet';
 export function WorldMap() {
   const stations = useStore(mapStore, (s) => s.stations);
   const mapStatus = useStore(mapStore, (s) => s.status);
+  const nearStatus = useStore(mapStore, (s) => s.nearStatus);
   const results = useStore(exploreStore, (s) => s.results);
   const selected = useStore(uiStore, (s) => s.selected);
 
@@ -53,7 +54,13 @@ export function WorldMap() {
   }, [selected]);
 
   const chip =
-    mapStatus === 'loading' ? 'Loading stations…' : mapStatus === 'error' ? 'Station markers unavailable' : null;
+    mapStatus === 'loading'
+      ? 'Loading stations…'
+      : mapStatus === 'error'
+        ? 'Station markers unavailable'
+        : nearStatus === 'loading'
+          ? 'Loading stations in this area…'
+          : null;
 
   return (
     <section className="ss-map" aria-label="World map">
