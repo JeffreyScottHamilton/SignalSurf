@@ -465,3 +465,65 @@ describe('searchStationsPage paging', () => {
     expect(searchCalls().every((u) => param(u, 'offset') === '0')).toBe(true);
   });
 });
+
+describe('fetchMapStationsPage', () => {
+  it('requests 1000 geo stations at offset page x 1000, with the same filters on every page', async () => {
+    installFetch((url) => json([rec(`p${param(url, 'offset')}`, { geo_lat: 1, geo_long: 2 })]));
+    await api.fetchMapStationsPage(0);
+    await api.fetchMapStationsPage(1);
+    await api.fetchMapStationsPage(2);
+    const search = searchCalls();
+    expect(search.map((u) => param(u, 'offset'))).toEqual(['0', '1000', '2000']);
+    for (const u of search) {
+      expect(param(u, 'has_geo_info')).toBe('true');
+      expect(param(u, 'limit')).toBe('1000');
+      expect(param(u, 'order')).toBe('clickcount');
+      expect(param(u, 'reverse')).toBe('true');
+      expect(param(u, 'hidebroken')).toBe('true');
+      expect(param(u, 'is_https')).toBe('true');
+      expect(param(u, 'name')).toBeNull();
+    }
+  });
+
+  it('caches each page separately, and a repeat call for a page makes no request', async () => {
+    installFetch((url) => json([rec(`p${param(url, 'offset')}`, { geo_lat: 1, geo_long: 2 })]));
+    const p1 = await api.fetchMapStationsPage(1);
+    const again = await api.fetchMapStationsPage(1);
+    const p2 = await api.fetchMapStationsPage(2);
+    expect(again).toBe(p1);
+    expect(p1.map((s) => s.id)).toEqual(['p1000']);
+    expect(p2.map((s) => s.id)).toEqual(['p2000']);
+    expect(searchCalls()).toHaveLength(2);
+  });
+
+  it('keeps page 0 identical to fetchMapStations, and shares its cache', async () => {
+    installFetch(() => json([rec('g1', { geo_lat: 52.5, geo_long: 13.4 })]));
+    const viaPage = await api.fetchMapStationsPage(0);
+    const viaMap = await api.fetchMapStations();
+    expect(viaMap).toBe(viaPage);
+    expect(searchCalls()).toHaveLength(1);
+  });
+
+  it('drops stations without coordinates on every page, before dedupe', async () => {
+    installFetch(() =>
+      json([
+        rec('nocoord', { url_resolved: 'https://stream.test/shared' }),
+        rec('mapped', { url_resolved: 'https://stream.test/shared', geo_lat: 1, geo_long: 2 }),
+      ]),
+    );
+    const out = await api.fetchMapStationsPage(1);
+    expect(out.map((s) => s.id)).toEqual(['mapped']);
+  });
+
+  it('does not cache a failed page', async () => {
+    let fail = true;
+    installFetch(() => {
+      if (fail) throw new TypeError('fetch failed');
+      return json([rec('g2', { geo_lat: 1, geo_long: 2 })]);
+    });
+    await expect(api.fetchMapStationsPage(2)).rejects.toMatchObject({ kind: 'network' });
+    fail = false;
+    const out = await api.fetchMapStationsPage(2);
+    expect(out.map((s) => s.id)).toEqual(['g2']);
+  });
+});

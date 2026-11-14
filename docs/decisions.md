@@ -22,9 +22,9 @@ A station is dropped unless its stream URL is `https:` (`src/api/normalize.ts`).
 
 The map is Leaflet (`src/map/mapController.tsx`) drawn over country shapes from `world-atlas/countries-50m.json`, which is bundled and loaded as a separate chunk (`src/map/landData.ts`). There are no raster or vector tile requests. Reason: no third-party map requests (privacy), no API key, and a flat dark style that matches the design. The trade-off is less detail at high zoom. Zoom is capped at 8.
 
-## Marker clustering, 1000 popular stations up front, nearby stations from zoom 5
+## Marker clustering, 1000 popular stations up front, 2000 more in the background, nearby stations from zoom 4
 
-On load, the app asks for the 1000 most-clicked stations that have coordinates (`has_geo_info=true`, `order=clickcount`, `limit=1000`, `fetchMapStations`). Markers are grouped with `leaflet.markercluster` (`maxClusterRadius` 22). From zoom 5 the map also loads stations near the centre, with a 600 ms debounce and a radius of at most 600 km (`scheduleLoad`, `loadNear`). Reason: one request gives a useful world view, and the nearby request fills in detail only where the user looks. The map keeps at most 6000 stations (`mapData.ts`, `CAP`), so nearby loads can add to the popular set without dropping it (`mapData.ts`, `CAP`).
+On load, the app asks for the 1000 most-clicked stations that have coordinates (page 0: `has_geo_info=true`, `order=clickcount`, `limit=1000`, `offset=0`, `fetchMapStationsPage`). Once page 0 is in, pages 1 and 2 (offsets 1000 and 2000) load one at a time when the browser is idle (`requestIdleCallback`, 1500 ms fallback), and stop early if a page adds no new station. They are skipped when `navigator.connection.saveData` is on or the effective connection is `2g` or `slow-2g` (`backgroundStatus`). Markers are grouped with `leaflet.markercluster` (`maxClusterRadius` 22). From zoom 4 the map also loads stations near the centre, with a 600 ms debounce and a radius of at most 600 km (`scheduleLoad`, `loadNear`). Reason: one request gives a useful world view, and the nearby request fills in detail only where the user looks. The map keeps at most 6000 stations (`mapData.ts`, `CAP`), so nearby loads can add to the popular set without dropping it (`mapData.ts`, `CAP`).
 
 ## Stations without coordinates are listed, never placed
 

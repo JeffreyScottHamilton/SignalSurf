@@ -26,7 +26,8 @@ export interface MapController {
 const ATTRIBUTION = 'Stations: Radio Browser · Map: Natural Earth';
 const WORLD_BOUNDS = L.latLngBounds([-75, -185], [85, 185]);
 const MAX_ZOOM = 8;
-const PROGRESS_MIN_ZOOM = 5;
+// Nearby stations load from this zoom on. Below it the map shows only the popular world-wide set.
+const PROGRESS_MIN_ZOOM = 4;
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
 const FOCUS_MIN_ZOOM = 5;
 const FOCUS_MAX_ZOOM = 6;
@@ -131,6 +132,8 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     iconCreateFunction: clusterIcon,
   });
   cluster.addTo(map);
+  // The lowest zoom markercluster has per-zoom grids for. See fitMinZoom.
+  let clusterFloor = Math.floor(map.getMinZoom());
 
   const popup = L.popup({
     className: 'ss-map-popup',
@@ -313,11 +316,21 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
   map.on('moveend', scheduleLoad);
 
+  /** Rebuilds the cluster grids from the current minimum zoom and re-adds every marker. */
+  function rebuildClusters() {
+    clusterFloor = Math.floor(map.getMinZoom());
+    cluster.clearLayers();
+    cluster.addLayers([...entries.values()].map((e) => e.marker));
+  }
+
   function fitMinZoom() {
     if (el.clientWidth <= 0) return;
     const min = minZoomFor(el.clientWidth);
     map.setMinZoom(min);
     if (map.getZoom() < min) map.setZoom(min, { animate: false });
+    // markercluster builds its per-zoom grids from the minimum zoom it had when filled. A narrower panel lowers
+    // that minimum, and the next station added would read a grid that does not exist, so the grids are rebuilt.
+    if (Math.floor(map.getMinZoom()) < clusterFloor) rebuildClusters();
   }
 
   const ro = typeof ResizeObserver === 'undefined'

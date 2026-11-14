@@ -26,7 +26,8 @@ const TOP_UP_LIMIT = 500;
 const NEAR_DEFAULT_LIMIT = 200;
 const NEAR_MAX_RADIUS_KM = 20000;
 const NEAR_CACHE_MAX = 50;
-const MAP_LIMIT = 1000;
+/** Stations per map page. Page n starts at offset n x this size. */
+const MAP_PAGE_SIZE = 1000;
 
 /** Radio Browser tag hint per station category (server-side pre-filter). */
 const TAG_HINT: Record<StationCategory, string> = {
@@ -39,7 +40,7 @@ const TAG_HINT: Record<StationCategory, string> = {
 // Session state: resolved once, shared by every request.
 let hostsPromise: Promise<string[]> | null = null;
 let activeHost = 0;
-let mapPromise: Promise<Station[]> | null = null;
+const mapPages = new Map<number, Promise<Station[]>>();
 const nearCache = new Map<string, Promise<Station[]>>();
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -307,22 +308,33 @@ export async function searchStations(
   return page.stations;
 }
 
-/** Popular stations that have coordinates, world-wide. One request per session. */
-export function fetchMapStations(signal?: AbortSignal): Promise<Station[]> {
-  if (mapPromise === null) {
-    const p = apiList('/json/stations/search', {
+/**
+ * One page of popular stations that have coordinates, world-wide, starting at offset page x MAP_PAGE_SIZE.
+ * Each page is requested once per session. A failed page is not cached, so the next call retries.
+ */
+export function fetchMapStationsPage(page: number, signal?: AbortSignal): Promise<Station[]> {
+  const n = Math.max(0, Math.floor(page));
+  let p = mapPages.get(n);
+  if (p === undefined) {
+    const req = apiList('/json/stations/search', {
       has_geo_info: 'true',
       order: 'clickcount',
       reverse: 'true',
-      limit: String(MAP_LIMIT),
+      limit: String(MAP_PAGE_SIZE),
+      offset: String(n * MAP_PAGE_SIZE),
     }).then((rows) => dedupeStations(toStations(rows).filter((s) => s.coords !== null)));
-    mapPromise = p;
-    // A failed load is not cached, so the next call retries.
-    p.catch(() => {
-      if (mapPromise === p) mapPromise = null;
+    p = req;
+    mapPages.set(n, req);
+    req.catch(() => {
+      if (mapPages.get(n) === req) mapPages.delete(n);
     });
   }
-  return raceAbort(mapPromise, signal);
+  return raceAbort(p, signal);
+}
+
+/** The first map page: the most popular stations with coordinates. See fetchMapStationsPage. */
+export function fetchMapStations(signal?: AbortSignal): Promise<Station[]> {
+  return fetchMapStationsPage(0, signal);
 }
 
 function isValidCoords(c: Coords): boolean {
