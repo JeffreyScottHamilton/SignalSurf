@@ -7,7 +7,7 @@ export interface MapDataState {
   status: LoadStatus;
 }
 
-const CAP = 3000;
+const CAP = 6000;
 
 export const mapStore: Store<MapDataState> = createStore<MapDataState>({
   stations: [],

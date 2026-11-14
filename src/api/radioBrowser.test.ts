@@ -84,7 +84,7 @@ describe('searchStations request parameters', () => {
       expect(param(u, 'is_https')).toBe('true');
       expect(param(u, 'order')).toBe('clickcount');
       expect(param(u, 'reverse')).toBe('true');
-      expect(param(u, 'limit')).toBe('60');
+      expect(param(u, 'limit')).toBe('150');
       expect(param(u, 'tag')).toBeNull();
     }
   });

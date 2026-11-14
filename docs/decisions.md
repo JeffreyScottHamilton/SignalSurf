@@ -24,7 +24,7 @@ The map is Leaflet (`src/map/mapController.tsx`) drawn over country shapes from 
 
 ## Marker clustering, 1000 popular stations up front, nearby stations from zoom 5
 
-On load, the app asks for the 1000 most-clicked stations that have coordinates (`has_geo_info=true`, `order=clickcount`, `limit=1000`, `fetchMapStations`). Markers are grouped with `leaflet.markercluster` (`maxClusterRadius` 22). From zoom 5 the map also loads stations near the centre, with a 600 ms debounce and a radius of at most 600 km (`scheduleLoad`, `loadNear`). Reason: one request gives a useful world view, and the nearby request fills in detail only where the user looks. The map keeps at most 3000 stations (`mapData.ts`, `CAP`).
+On load, the app asks for the 1000 most-clicked stations that have coordinates (`has_geo_info=true`, `order=clickcount`, `limit=1000`, `fetchMapStations`). Markers are grouped with `leaflet.markercluster` (`maxClusterRadius` 22). From zoom 5 the map also loads stations near the centre, with a 600 ms debounce and a radius of at most 600 km (`scheduleLoad`, `loadNear`). Reason: one request gives a useful world view, and the nearby request fills in detail only where the user looks. The map keeps at most 6000 stations (`mapData.ts`, `CAP`), so nearby loads can add to the popular set without dropping it (`mapData.ts`, `CAP`).
 
 ## Stations without coordinates are listed, never placed
 

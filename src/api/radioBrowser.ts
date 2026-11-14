@@ -19,7 +19,7 @@ const FALLBACK_HOSTS = ['de1', 'de2', 'fi1'].map((h) => `${h}.api.radio-browser.
 const HOST_PATTERN = /^[a-z0-9-]+\.api\.radio-browser\.info$/;
 const DISCOVERY_TIMEOUT_MS = 5000;
 const REQUEST_TIMEOUT_MS = 15000;
-const DEFAULT_SEARCH_LIMIT = 60;
+const DEFAULT_SEARCH_LIMIT = 150;
 const TOP_UP_THRESHOLD = 20;
 const TOP_UP_LIMIT = 500;
 const NEAR_DEFAULT_LIMIT = 200;

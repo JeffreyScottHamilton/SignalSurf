@@ -96,17 +96,17 @@ describe('mapStore', () => {
     expect(md.mapStore.get().stations.map((s) => s.id)).toEqual(['a', 'b', 'c']);
   });
 
-  it('caps the stations at 3000, dropping the oldest', async () => {
+  it('caps the stations at 6000, dropping the oldest', async () => {
     installFetch((url) => {
       const lat = Number(url.searchParams.get('geo_lat'));
       const batch = Array.from({ length: 200 }, (_, k) => geoRec(`${lat}-${k}`, 1, 1));
       return json(batch);
     });
-    for (let i = 0; i < 16; i++) md.loadNear({ lat: i * 5, lng: 0 }, 50);
-    await vi.waitFor(() => expect(md.mapStore.get().stations.length).toBe(3000));
+    for (let i = 0; i < 31; i++) md.loadNear({ lat: -60 + i * 4, lng: 0 }, 50);
+    await vi.waitFor(() => expect(md.mapStore.get().stations.length).toBe(6000));
     const ids = md.mapStore.get().stations.map((s) => s.id);
-    expect(ids.includes('0-0')).toBe(false);
-    expect(ids.at(-1)).toBe('75-199');
+    expect(ids.includes('-60-0')).toBe(false);
+    expect(ids.at(-1)).toBe('60-199');
   });
 
   it('loadNear ignores failures silently', async () => {
