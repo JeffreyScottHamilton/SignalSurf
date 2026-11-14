@@ -44,6 +44,19 @@ describe('stationLocation', () => {
     expect(stationLocation(station({ stateCode: 'ZZ' }))).toBe('United States');
   });
 
+  it('shows the migrated legacy location before the catalogue fields', () => {
+    expect(stationLocation(station({ legacyLocation: 'Oslo, Norway' }))).toBe('Oslo, Norway');
+    expect(stationLocation(station({ legacyLocation: 'Oslo, Norway', stateCode: 'TX' }))).toBe('Oslo, Norway');
+  });
+
+  it('never says United States for a favourite that has legacy text', () => {
+    expect(stationLocation(station({ legacyLocation: 'Bavaria, Germany' }))).not.toBe('United States');
+  });
+
+  it('treats a blank legacy location as absent', () => {
+    expect(stationLocation(station({ legacyLocation: '  ' }))).toBe('United States');
+  });
+
   it('treats a blank city as unknown', () => {
     expect(stationLocation(station({ city: '   ', stateCode: 'NY' }))).toBe('New York');
   });

@@ -132,6 +132,7 @@ describe('legacy storage migration', () => {
     expect(fav.genres).toEqual([]);
     expect(fav).not.toHaveProperty('region');
     expect(fav).not.toHaveProperty('country');
+    expect(fav.legacyLocation).toBe('Oslo, Norway');
   });
 
   it('does nothing when no old keys exist', async () => {

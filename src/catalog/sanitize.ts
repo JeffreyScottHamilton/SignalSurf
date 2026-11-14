@@ -57,6 +57,7 @@ export function sanitizeStation(v: unknown): Station | null {
   const favicon = text(v.favicon);
   const bitrate = v.bitrate;
   const stateCode = typeof v.stateCode === 'string' ? v.stateCode.trim() : '';
+  const legacy = text(v.legacyLocation);
 
   return {
     id,
@@ -75,5 +76,6 @@ export function sanitizeStation(v: unknown): Station | null {
     hls: v.hls === true,
     coords: coordsOf(v.coords),
     clickCount: nonNegative(v.clickCount),
+    ...(legacy !== null ? { legacyLocation: legacy } : {}),
   };
 }

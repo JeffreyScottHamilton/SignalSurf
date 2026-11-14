@@ -9,10 +9,11 @@ function startOfDay(ms: number): number {
 }
 
 /**
- * "City, ST" when both are known, the state's full name, the city alone, or "United States" when no state
- * is known. Never guesses a state or city.
+ * The legacy text when the station was migrated from the old app, else "City, ST" when both are known, the
+ * state's full name, the city alone, or "United States" when no state is known. Never guesses a state or city.
  */
 export function stationLocation(s: Station): string {
+  if (typeof s.legacyLocation === 'string' && s.legacyLocation.trim() !== '') return s.legacyLocation.trim();
   const name = stateName(s.stateCode);
   const city = typeof s.city === 'string' ? s.city.trim() : '';
   if (s.stateCode !== null && name !== null) return city ? `${city}, ${s.stateCode}` : name;

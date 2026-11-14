@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyDetailed,
   classifyStation,
   dedupeCatalog,
+  nameGenres,
   inPolygon,
   inUsBox,
   normalizeRaw,
@@ -70,12 +72,12 @@ describe('classifyStation: genres', () => {
   it('matches whole words only', () => {
     expect(classifyStation(['rocket']).reason).toBe('no-genre');
     expect(classifyStation(['popcorn']).reason).toBe('no-genre');
-    expect(classifyStation(['dancehall']).reason).toBe('no-genre');
+    expect(classifyStation(['dancehalls']).reason).toBe('no-genre');
     expect(classifyStation(['transport']).reason).toBe('no-genre');
   });
 
   it('reports a station with no genre match as no-genre', () => {
-    expect(classifyStation(['reggae', 'caribbean'])).toEqual({ reason: 'no-genre', genres: [] });
+    expect(classifyStation(['gardening', 'cooking'])).toEqual({ reason: 'no-genre', genres: [] });
   });
 
   it('keeps a station whose only tags are bare music or variety, with no genres', () => {
@@ -84,8 +86,15 @@ describe('classifyStation: genres', () => {
     expect(classifyStation(['music variety'])).toEqual({ reason: null, genres: [] });
   });
 
-  it('does not keep bare music when a non-genre tag is present', () => {
-    expect(classifyStation(['music', 'community radio']).reason).toBe('no-genre');
+  it('keeps bare music with genres [] when the other tags are not genre words', () => {
+    expect(classifyStation(['music', 'community radio'])).toEqual({ reason: null, genres: [] });
+    expect(classifyStation(['music', 'gardening'])).toEqual({ reason: null, genres: [] });
+  });
+
+  it('maps reggae, caribbean and world tags to latin, and holiday tags to pop', () => {
+    expect(classifyStation(['reggae', 'caribbean']).genres).toEqual(['latin']);
+    expect(classifyStation(['world music']).genres).toEqual(['latin']);
+    expect(classifyStation(['christmas']).genres).toEqual(['pop']);
   });
 
   it('treats no tags, or only blank tags, as untagged', () => {
@@ -96,21 +105,60 @@ describe('classifyStation: genres', () => {
 
 describe('classifyStation: hard excludes', () => {
   it.each([
-    [['news talk', 'jazz']],
     [['talk']],
+    [['sports', 'news', 'rock']],
+    [['old time radio', 'podcast', 'jazz']],
+    [['otr']],
+  ])('drops %j as hard-exclude when excludes outnumber genre tags', (tags) => {
+    expect(classifyStation(tags)).toEqual({ reason: 'hard-exclude', genres: [] });
+  });
+
+  it.each([
+    [['news talk', 'jazz']],
     [['sports', 'rock']],
     [['christian preaching', 'christian']],
-    [['old time radio', 'jazz']],
-    [['otr', 'oldies']],
     [['Local News', 'pop']],
     [['bible', 'gospel']],
-    [['podcast', 'rock']],
-  ])('drops %j as hard-exclude', (tags) => {
-    expect(classifyStation(tags)).toEqual({ reason: 'hard-exclude', genres: [] });
+    [['talk', 'alternative', 'rock']],
+  ])('keeps %j when genre tags are at least as many as excludes (KEXP, KCRW)', (tags) => {
+    expect(classifyStation(tags).reason).toBeNull();
   });
 
   it('excludes whole words, not substrings', () => {
     expect(classifyStation(['sportsman radio', 'rock']).reason).toBeNull();
+  });
+});
+
+describe('classifyStation: name rule', () => {
+  it('admits an untagged station by a whole-word genre in its name, marked by name', () => {
+    expect(classifyDetailed([], 'Classic Rock 101')).toEqual({ reason: null, genres: ['rock'], by: 'name' });
+    expect(classifyDetailed(['music'], 'Smooth Jazz Lounge')).toEqual({ reason: null, genres: ['jazz'], by: 'name' });
+    expect(classifyStation([], 'Tejano Hits').genres).toEqual(['pop', 'latin']);
+    expect(classifyStation([], 'R&B Nation').genres).toEqual(['hiphop']);
+    expect(classifyStation([], 'Hip-Hop Hits').genres).toEqual(['pop', 'hiphop']);
+  });
+
+  it('uses tags first: a station with a genre tag is marked by tags', () => {
+    expect(classifyDetailed(['jazz'], 'Rock Station')).toEqual({ reason: null, genres: ['jazz'], by: 'tags' });
+  });
+
+  it('matches whole words only', () => {
+    expect(nameGenres('Rockford Radio').genres).toEqual([]);
+    expect(nameGenres('Popular Music FM').genres).toEqual([]);
+    expect(nameGenres('Countryside Gospel').genres).toEqual(['christian']);
+    expect(classifyStation([], 'Rockford Radio').reason).toBe('untagged');
+  });
+
+  it('does not admit a name with a hard-exclude word', () => {
+    expect(classifyStation([], 'Rock News Radio').reason).toBe('untagged');
+    expect(classifyStation([], 'ESPN Jazz').reason).toBe('untagged');
+    expect(classifyStation(['music'], 'Sermon Country').genres).toEqual([]);
+  });
+
+  it('does not admit call letters or generic words', () => {
+    expect(classifyStation([], 'KTST 96.5 FM').reason).toBe('untagged');
+    expect(classifyStation(['gardening'], 'WXYZ Radio').reason).toBe('no-genre');
+    expect(classifyStation([], 'Austin City Radio').reason).toBe('untagged');
   });
 });
 

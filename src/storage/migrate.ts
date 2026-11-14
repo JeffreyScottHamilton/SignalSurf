@@ -22,6 +22,17 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/** Old region and country text as one label, e.g. "Oslo, Norway"; null when neither is set. */
+function legacyLocationText(v: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  for (const value of [v.region, v.country]) {
+    if (typeof value !== 'string') continue;
+    const t = value.replace(/\s+/g, ' ').trim();
+    if (t !== '' && !parts.some((p) => p.toLowerCase() === t.toLowerCase())) parts.push(t);
+  }
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
 /**
  * Old snapshot to current shape. A station that is in the catalogue takes the catalogue record.
  * Otherwise region and country are dropped (never mapped to a guessed state or city) and the
@@ -32,9 +43,16 @@ function adaptStation(v: unknown, byId: ReadonlyMap<string, Station>): unknown {
   const id = typeof v.id === 'string' ? v.id : null;
   const fromCatalog = id !== null ? byId.get(id) : undefined;
   if (fromCatalog !== undefined) return fromCatalog;
+  const legacy = legacyLocationText(v);
   const rest: Record<string, unknown> = { ...v };
   for (const key of LEGACY_LOCATION_FIELDS) delete rest[key];
-  return { ...rest, stateCode: null, city: null, genres: [] };
+  return {
+    ...rest,
+    stateCode: null,
+    city: null,
+    genres: [],
+    ...(legacy !== null ? { legacyLocation: legacy } : {}),
+  };
 }
 
 /** Favourites are station lists; history entries wrap a station as { station, playedAt }. */

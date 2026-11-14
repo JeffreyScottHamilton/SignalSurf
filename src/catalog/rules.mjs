@@ -17,7 +17,7 @@ export const GENRE_LABELS = {
   classical: 'Classical',
   electronic: 'Electronic',
   oldies: 'Oldies',
-  latin: 'Latin',
+  latin: 'Latin & World',
   christian: 'Christian & Gospel',
   indie: 'Indie & College',
   folk: 'Folk & Americana',
@@ -30,7 +30,9 @@ export const HARD_EXCLUDES = [
 ];
 
 /** Tags that carry no genre and mean "music, unspecified". A station made only of these is kept with genres []. */
-export const GENERIC_MUSIC_TAGS = ['music', 'variety', 'music variety', 'various music', 'various'];
+export const GENERIC_MUSIC_TAGS = [
+  'music', 'variety', 'music variety', 'various music', 'various', 'eclectic', 'freeform', 'community radio',
+];
 
 /**
  * Whole-tag rules, checked before the word rules. A tag equal to a key maps to the
@@ -46,13 +48,13 @@ const EXACT_TAG_GENRES = {
  */
 const WORD_GENRES = {
   rock: [
-    'rock', 'alternative', 'punk', 'metal', 'grunge', 'new wave', 'emo', 'ska', 'rockabilly',
+    'rock', 'alternative', 'punk', 'metal', 'grunge', 'new wave', 'emo', 'rockabilly',
     'garage', 'adult album alternative', 'modern rock', 'active rock', 'n roll',
   ],
   country: ['country', 'western swing', 'honky tonk', 'outlaw'],
   pop: [
     'pop', 'top 40', 'adult contemporary', 'adult hits', 'contemporary hits', 'contemporary hits radio', 'easy listening',
-    'variety hits', 'lite', 'hot ac', 'adult standards',
+    'variety hits', 'lite', 'hot ac', 'adult standards', 'christmas', 'holiday', 'xmas',
   ],
   hiphop: [
     'hip hop', 'hiphop', 'rap', 'r b', 'rnb', 'rhythm and blues', 'soul', 'funk', 'urban',
@@ -73,12 +75,13 @@ const WORD_GENRES = {
   latin: [
     'latin', 'latino', 'regional mexican', 'regional mexicano', 'reggaeton', 'salsa', 'banda', 'bachata', 'cumbia',
     'merengue', 'tejano', 'mariachi', 'norteno', 'ranchera', 'tropical',
+    'ska', 'reggae', 'dancehall', 'soca', 'calypso', 'caribbean', 'hawaiian', 'world', 'world music', 'international',
   ],
   christian: [
     'christian', 'cristiana', 'cristiano', 'gospel', 'ccm', 'worship', 'praise', 'hymns', 'hymn', 'religious',
     'inspirational', 'sacred music',
   ],
-  indie: ['indie', 'college', 'student radio', 'university radio', 'freeform', 'experimental', 'independent', 'eclectic'],
+  indie: ['indie', 'college', 'student radio', 'university radio', 'experimental', 'independent'],
   folk: ['folk', 'americana', 'bluegrass', 'singer songwriter', 'acoustic', 'celtic'],
 };
 
@@ -100,37 +103,96 @@ const WORD_PADDED = Object.fromEntries(
 );
 const EXACT_MAP = new Map(Object.entries(EXACT_TAG_GENRES).map(([k, v]) => [foldTag(k), v]));
 
+/** Classifies without the `by` field. */
+export function classifyStation(tags, name = '') {
+  const { reason, genres } = classifyDetailed(tags, name);
+  return { reason, genres };
+}
+
 /**
- * Classifies a station's raw tag list.
- * Returns { reason, genres }: reason is null when the station is kept, otherwise
- * 'untagged' | 'hard-exclude' | 'no-genre'. genres is in GENRES order.
- * A station is kept when no tag is a hard exclude and either a tag maps to a genre
- * or every tag is a generic music tag (then genres is []).
+ * Name keywords, used only when the tags give no genre. Whole words, folded like tags.
+ * Generic words (radio, fm, call letters, city names) are never evidence.
  */
-export function classifyStation(tags) {
+const NAME_GENRES = {
+  rock: ['rock', 'alternative', 'metal', 'punk'],
+  country: ['country'],
+  pop: ['pop', 'hits', 'top 40'],
+  hiphop: ['hip hop', 'hiphop', 'r b', 'rnb', 'soul', 'funk', 'rap'],
+  jazz: ['jazz', 'blues', 'smooth jazz', 'lounge'],
+  classical: ['classical'],
+  electronic: ['edm', 'dance', 'electronic', 'chill'],
+  oldies: ['oldies', '60s', '70s', '80s', '90s', '60 s', '70 s', '80 s', '90 s'],
+  latin: ['latin', 'latino', 'latina', 'tejano', 'regional mexicana', 'regional mexican', 'salsa', 'reggae'],
+  christian: ['gospel', 'worship'],
+  indie: ['indie'],
+  folk: ['folk', 'bluegrass', 'americana'],
+};
+/** Hard-exclude words that block admission by name alone. */
+const NAME_HARD_EXCLUDES = [
+  ...HARD_EXCLUDES, 'espn', 'npr', 'sermon', 'police', 'weather', 'traffic', 'scanner', 'bible',
+];
+const NAME_WORD_PADDED = Object.fromEntries(GENRES.map((g) => [g, NAME_GENRES[g].map(padded)]));
+const NAME_HARD_PADDED = NAME_HARD_EXCLUDES.map(padded);
+
+/** Genres from a station name, and whether the name holds a hard-exclude word. */
+export function nameGenres(name) {
+  const sp = padded(typeof name === 'string' ? name : '');
+  if (NAME_HARD_PADDED.some((kw) => sp.includes(kw))) return { genres: [], hard: true };
+  const genres = GENRES.filter((g) => NAME_WORD_PADDED[g].some((kw) => sp.includes(kw)));
+  return { genres, hard: false };
+}
+
+/**
+ * Classifies a station from its raw tags and, when the tags give no genre, its name.
+ * Returns { reason, genres, by }: reason is null when the station is kept, otherwise
+ * 'untagged' | 'hard-exclude' | 'no-genre'. genres is in GENRES order. by is 'tags' or 'name'
+ * for kept stations (build summary only, never written to the catalogue).
+ * classifyStation(tags, name) is the same without `by`.
+ *
+ * Tags: each tag is either a hard exclude (X), a genre tag (G), a generic music tag, or unknown.
+ *   - X > G: dropped as hard-exclude.
+ *   - G >= 1 (and G >= X): kept with the genres of the genre tags.
+ *   - G = 0, X = 0, and at least one generic tag: kept with genres [] (All only).
+ * Name (only when no genre came from the tags): whole-word genre keywords admit the station,
+ * unless the name holds a hard-exclude word.
+ */
+export function classifyDetailed(tags, name = '') {
   const folded = (Array.isArray(tags) ? tags : [])
     .map((t) => foldTag(t ?? ''))
     .filter((t) => t.length > 0);
-  if (folded.length === 0) return { reason: 'untagged', genres: [] };
-  const spaced = folded.map((t) => ` ${t} `);
-  if (spaced.some((t) => HARD_PADDED.some((kw) => t.includes(kw)))) {
-    return { reason: 'hard-exclude', genres: [] };
-  }
+  let gTags = 0;
+  let xTags = 0;
+  let generic = false;
   const found = new Set();
   for (const t of folded) {
+    const sp = ` ${t} `;
+    if (HARD_PADDED.some((kw) => sp.includes(kw))) {
+      xTags += 1;
+      continue;
+    }
+    let matched = false;
     const exact = EXACT_MAP.get(t);
     if (exact !== undefined) {
       for (const g of exact) found.add(g);
-      continue;
+      matched = true;
+    } else {
+      for (const g of GENRES) {
+        if (WORD_PADDED[g].some((kw) => sp.includes(kw))) {
+          found.add(g);
+          matched = true;
+        }
+      }
     }
-    const sp = ` ${t} `;
-    for (const g of GENRES) {
-      if (WORD_PADDED[g].some((kw) => sp.includes(kw))) found.add(g);
-    }
+    if (matched) gTags += 1;
+    else if (GENERIC_SET.has(t)) generic = true;
   }
-  if (found.size > 0) return { reason: null, genres: GENRES.filter((g) => found.has(g)) };
-  if (folded.every((t) => GENERIC_SET.has(t))) return { reason: null, genres: [] };
-  return { reason: 'no-genre', genres: [] };
+  if (xTags > gTags) return { reason: 'hard-exclude', genres: [], by: null };
+  if (gTags > 0) return { reason: null, genres: GENRES.filter((g) => found.has(g)), by: 'tags' };
+  const byName = nameGenres(name);
+  if (!byName.hard && byName.genres.length > 0) return { reason: null, genres: byName.genres, by: 'name' };
+  if (generic) return { reason: null, genres: [], by: 'tags' };
+  if (folded.length === 0) return { reason: 'untagged', genres: [], by: null };
+  return { reason: 'no-genre', genres: [], by: null };
 }
 
 /** US states and territories with the codes used by us-atlas (FIPS id -> USPS code). */
@@ -285,7 +347,7 @@ export function normalizeRaw(raw, polygonState) {
   if (!streamOk) return { reason: 'non-https' };
 
   const tags = parseTags(raw.tags);
-  const cls = classifyStation(tags);
+  const cls = classifyDetailed(tags, name);
   if (cls.reason !== null) return { reason: cls.reason };
 
   const home = str(raw.homepage);
@@ -345,7 +407,7 @@ export function normalizeRaw(raw, polygonState) {
     ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
     clickCount: Math.max(0, finite(raw.clickcount) ?? 0),
   };
-  return { station, reason: null, stateSource: stateSource ?? 'null', coordsDropped };
+  return { station, reason: null, by: cls.by, stateSource: stateSource ?? 'null', coordsDropped };
 }
 
 function finite(v) {

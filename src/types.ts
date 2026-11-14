@@ -17,6 +17,7 @@ export interface Station {
   bitrate: number | null;     // kbps, null when unknown
   hls: boolean;
   coords: Coords | null;      // null unless inside a US box
+  legacyLocation?: string;    // old region/country text, kept only for favourites migrated from the old global app
   clickCount: number;         // directory popularity, used for ordering
 }
 export interface HistoryEntry { station: Station; playedAt: number } // epoch ms

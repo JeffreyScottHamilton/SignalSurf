@@ -138,6 +138,7 @@ async function main() {
   const drop = { junk: 0, 'non-https': 0, untagged: 0, 'hard-exclude': 0, 'no-genre': 0, duplicate: 0 };
   const sources = { iso: 0, name: 0, polygon: 0, null: 0 };
   let coordsDropped = 0;
+  let byName = 0;
   const kept = [];
   for (const row of raw) {
     const r = normalizeRaw(row, polygonState);
@@ -146,6 +147,7 @@ async function main() {
       continue;
     }
     sources[r.stateSource] += 1;
+    if (r.by === 'name') byName += 1;
     if (r.coordsDropped) coordsDropped += 1;
     kept.push(r.station);
   }
@@ -180,6 +182,7 @@ async function main() {
       `non-https ${drop['non-https']}, duplicate ${drop.duplicate}, junk ${drop.junk}`,
   );
   console.log(`genres (a station may count twice): ${GENRES.map((g) => `${g} ${genreCounts[g]}`).join(', ')}`);
+  console.log(`admitted by name (no genre from tags): ${byName}`);
   console.log(`genre-less kept (All only): ${noGenre}`);
   console.log(`with coords: ${withCoords}; coords dropped as outside US: ${coordsDropped}`);
   console.log(`stateCode sources: iso ${sources.iso}, name ${sources.name}, polygon ${sources.polygon}, null ${sources.null}`);

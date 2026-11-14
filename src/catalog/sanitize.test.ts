@@ -73,6 +73,12 @@ describe('sanitizeStation', () => {
     expect(s).toMatchObject({ stateCode: null, city: null });
   });
 
+  it('keeps the migrated legacy location text when present, and omits it otherwise', () => {
+    expect(sanitizeStation(valid({ legacyLocation: ' Oslo, Norway ' }))?.legacyLocation).toBe('Oslo, Norway');
+    expect(sanitizeStation(valid({ legacyLocation: '  ' }))).not.toHaveProperty('legacyLocation');
+    expect(sanitizeStation(valid({}))).not.toHaveProperty('legacyLocation');
+  });
+
   it('nulls a non-string codec', () => {
     expect(sanitizeStation(valid({ codec: [] }))?.codec).toBeNull();
   });

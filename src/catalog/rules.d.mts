@@ -12,7 +12,9 @@ export declare const US_BOXES: ReadonlyArray<readonly [number, number, number, n
 export type DropReason = 'untagged' | 'hard-exclude' | 'no-genre' | 'junk' | 'non-https';
 
 export declare function foldTag(text: string): string;
-export declare function classifyStation(tags: readonly string[]): { reason: DropReason | null; genres: GenreId[] };
+export declare function classifyStation(tags: readonly string[], name?: string): { reason: DropReason | null; genres: GenreId[] };
+export declare function classifyDetailed(tags: readonly string[], name?: string): { reason: DropReason | null; genres: GenreId[]; by: 'tags' | 'name' | null };
+export declare function nameGenres(name: string): { genres: GenreId[]; hard: boolean };
 export declare function parseStateText(raw: unknown): { code: string | null; city: string | null };
 export declare function stateFromIso(iso: unknown): string | null;
 export declare function inUsBox(lat: number, lng: number): boolean;
@@ -38,7 +40,7 @@ export interface CatalogRecord {
 }
 export type NormalizeResult =
   | { reason: DropReason }
-  | { station: CatalogRecord; reason: null; stateSource: 'iso' | 'name' | 'polygon' | 'null'; coordsDropped: boolean };
+  | { station: CatalogRecord; reason: null; by: 'tags' | 'name' | null; stateSource: 'iso' | 'name' | 'polygon' | 'null'; coordsDropped: boolean };
 export declare function normalizeRaw(raw: unknown, polygonState?: ((lng: number, lat: number) => string | null) | null): NormalizeResult;
 export declare function parseTags(v: unknown): string[];
 export declare function dedupeCatalog<T extends { id: string; streamUrl: string }>(list: T[]): T[];
