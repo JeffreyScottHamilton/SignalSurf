@@ -110,8 +110,8 @@ describe('detailShown', () => {
 });
 
 describe('mapMaxZoomFor', () => {
-  it('caps the street map at 15 and the satellite at its native 16 plus one', () => {
-    expect(mapMaxZoomFor('streets')).toBe(15);
+  it('caps the street and satellite maps at their native 16 plus one', () => {
+    expect(mapMaxZoomFor('streets')).toBe(17);
     expect(mapMaxZoomFor('satellite')).toBe(17);
   });
 });

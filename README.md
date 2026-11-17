@@ -13,7 +13,7 @@ Roadtrip Radio is a free map of US music radio stations that you can play in the
 - Favourites and history, kept in this browser only.
 - Settings: default volume, clearing favourites and history, and an About panel with the data sources and the catalogue date.
 
-Everything runs in the browser. The station catalogue is one static file, `public/catalog.json`, and search, filtering and the map are computed locally from it. The only network requests are the catalogue itself, station logos, the station streams you play, and, at zoom 6 and above, map tiles from CARTO (street map) or USGS (satellite imagery). If the tiles cannot load, the map keeps its outline view and says so.
+Everything runs in the browser. The station catalogue is one static file, `public/catalog.json`, and search, filtering and the map are computed locally from it. The only network requests are the catalogue itself, station logos, the station streams you play, and, at zoom 6 and above, map tiles from USGS (street map or satellite imagery). If the tiles cannot load, the map keeps its outline view and says so.
 
 ## Quick start
 
@@ -55,10 +55,10 @@ Run `npm run build` and serve the static `dist/` folder from any static host.
 
 - **Stations:** the [Radio Browser](https://www.radio-browser.info/) community directory. Its site states that the data is in the public domain. The catalogue keeps only stations that have an HTTPS stream, a tag that maps to a music genre, and no non-music tag. Details: [docs/data-source.md](docs/data-source.md).
 - **Map shapes:** US state outlines from the US Census Bureau through the `us-atlas` package (ISC licence in the package). Below zoom 6 the map draws only the US.
-- **Map imagery:** street tiles from CARTO (dark basemap, OpenStreetMap data) and satellite tiles from USGS (`USGSImageryOnly`, no labels), requested only at zoom 6 and above. The terms for these tiles were not re-checked for this build; see [docs/licenses.md](docs/licenses.md) and [docs/decisions.md](docs/decisions.md).
+- **Map imagery:** street tiles from USGS (`USGSTopo`, The National Map, dimmed with a CSS filter) and satellite tiles from USGS (`USGSImageryOnly`, no labels), requested only at zoom 6 and above. The terms for these tiles were not re-checked for this build; see [docs/licenses.md](docs/licenses.md) and [docs/decisions.md](docs/decisions.md).
 - **Libraries:** Leaflet, markercluster, React, hls.js, Inter and others. Their licences and the notices are in [docs/licenses.md](docs/licenses.md) and [public/THIRD-PARTY-NOTICES.txt](public/THIRD-PARTY-NOTICES.txt), which ships with the app.
 
-The map and the About panel credit Radio Browser, the US Census Bureau, and the active tile source (CARTO and OpenStreetMap, or USGS).
+The map and the About panel credit Radio Browser, the US Census Bureau, and the active tile source (USGS).
 
 ## Known limitations
 
@@ -67,7 +67,7 @@ The map and the About panel credit Radio Browser, the US Census Bureau, and the 
 - **Untagged stations with no genre in their name are left out.** They cannot be shown to be music, so they are not in the catalogue. Stations tagged only "music" or "variety" are kept and appear under All only.
 - **Some streams fail in browsers.** Common causes are a codec the browser cannot decode (AAC is not in every browser), a stream that refuses browser playback, a region restriction, or a station that has gone offline. The player shows a message and a Try again button.
 - **The catalogue is a snapshot.** It is refreshed only when someone runs `npm run catalog`, so a station that closes stays until the next refresh.
-- **Map tiles depend on CARTO and USGS.** When tiles fail, the map shows the outline view and the message "Detailed map unavailable". The map is never blank.
+- **Map tiles depend on USGS.** When tiles fail, the map shows the outline view and the message "Detailed map unavailable". The map is never blank.
 - **Favourites and history are local.** They are stored in this browser's `localStorage` and are not synced between devices or browsers.
 - **No track information.** The app shows the station name and the playback status, not the song or artist.
 

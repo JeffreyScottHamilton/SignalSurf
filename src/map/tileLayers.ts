@@ -7,25 +7,25 @@ export interface TileSource {
   subdomains?: string;
   maxZoom: number;
   maxNativeZoom?: number;
+  /** Class on the layer's container; the streets layer is darkened by a CSS filter on it (WorldMap.css). */
+  className?: string;
 }
 
 // Phones get the short credit (CSS picks one under 768px). The streets credit must stay in both forms.
-const CARTO_LONG =
-  '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>';
-const CARTO_SHORT =
-  '© <a href="https://www.openstreetmap.org/copyright">OSM</a> · © <a href="https://carto.com/attributions">CARTO</a>';
+const USGS_LONG = 'Map: <a href="https://www.usgs.gov/">USGS</a> The National Map';
+const USGS_SHORT = 'Map: <a href="https://www.usgs.gov/">USGS</a>';
 
 /**
- * Streets: CARTO dark basemap. Satellite: USGS ImageryOnly (public domain). The ImageryTopo service is not
- * published on basemap.nationalmap.gov, so the imagery has no road or place labels.
- * Note the USGS tile path order: {z}/{y}/{x}.
+ * Streets: USGS Topo (public domain), dimmed by a CSS filter in the map styles. Satellite: USGS ImageryOnly (public domain).
+ * Both are on basemap.nationalmap.gov, whose tile path order is {z}/{y}/{x}. USGSTopo has native levels up to 16.
  */
 export const TILE_SOURCES: Record<MapStyle, TileSource> = {
   streets: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd',
-    attribution: `<span class="ss-attr--long">${CARTO_LONG}</span><span class="ss-attr--short">${CARTO_SHORT}</span>`,
-    maxZoom: 15,
+    url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
+    attribution: `<span class="ss-attr--long">${USGS_LONG}</span><span class="ss-attr--short">${USGS_SHORT}</span>`,
+    maxNativeZoom: 16,
+    maxZoom: 17,
+    className: 'ss-tiles--streets',
   },
   satellite: {
     url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}',

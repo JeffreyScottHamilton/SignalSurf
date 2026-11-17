@@ -140,6 +140,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
       subdomains: src.subdomains ?? 'abc',
       maxZoom: src.maxZoom,
       maxNativeZoom: src.maxNativeZoom,
+      className: src.className,
     });
   }
   // Tile results for the current style. A failure is counted per style and cleared when the style changes.

@@ -2,8 +2,8 @@ import type { MapStyle } from '@/types';
 
 /** From this zoom on the map shows tiles, a mask and state outlines. Below it the US is the vector fill, with no tile requests. */
 export const DETAIL_ZOOM = 6;
-/** Zoom of the street tiles' top level. */
-export const STREETS_MAX_ZOOM = 15;
+/** Street tiles' top level: USGS Topo's native level 16; one level of upscaling is allowed past it. */
+export const STREETS_MAX_ZOOM = 17;
 /** USGS imagery's native top level is 16; one level of upscaling is allowed past it. */
 export const SATELLITE_MAX_ZOOM = 17;
 /** Failed tile loads in a row (with no successful load) before the detailed map is treated as unavailable. */

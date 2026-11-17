@@ -66,18 +66,18 @@ The earlier app wrote `signalsurf:favorites:v1`, `signalsurf:history:v1` and `si
 
 Below zoom 6 the map is the vector outline view, and it makes no tile requests. From zoom 6 the map shows imagery, because at city scale the outline view does not show where a station sits. Two sources, both without a key or an account:
 
-- **Streets:** CARTO's dark basemap (`basemap.cartocdn.com`, `dark_all`), which matches the app's dark style. Maximum zoom 15.
+- **Streets:** the USGS `USGSTopo` service (`basemap.nationalmap.gov`, The National Map, public domain). Its native top level is 16 (checked at Denver, New York and San Francisco: 16 returns tiles, 17 returns 404); the view allows one level of upscaling to 17. A basemap that needs a key or shows a watermark is not used. The class `ss-tiles--streets` on the layer applies a CSS filter (`invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6)`) so the light topo map reads on the dark panel; the satellite layer is not filtered.
 - **Satellite:** the USGS `USGSImageryOnly` service (`basemap.nationalmap.gov`). The `ImageryTopo` service is not published on that host, so the satellite view has no road or place labels. The service's top level is 16; the view allows one level of upscaling to 17.
 
 From zoom 6 a non-interactive mask dims land outside the US (a world rectangle with the state outlines cut out, at 0.8 opacity), and the state borders are drawn above the tiles.
 
-**Privacy.** At zoom 6 and above the browser requests map images from CARTO (streets) or USGS (satellite) only. Those requests reveal the area being viewed, at tile precision, to that host. The app does not proxy tiles, sends no search text or favourites anywhere, and adds no analytics. The street or satellite choice is saved in `roadtrip:settings:v1` on this device.
+**Privacy.** At zoom 6 and above the browser requests map images from USGS (streets or satellite) only. Those requests reveal the area being viewed, at tile precision, to that host. The app does not proxy tiles, sends no search text or favourites anywhere, and adds no analytics. The street or satellite choice is saved in `roadtrip:settings:v1` on this device.
 
 **Fallback.** If at least 4 tile requests fail and none loads (`tilesUnavailable` in `src/map/zoom.ts`), the vector fill comes back, the mask and imagery are hidden, and the map shows "Detailed map unavailable". Markers and the outlines keep working, so the map is never blank.
 
 The marker clusters are rebuilt when the zoom range changes, because markercluster reads the map's minimum and maximum zoom only once, when the group is added.
 
-Attribution: the base credit is "Stations: Radio Browser · Map: US Census Bureau"; the active tile credit is added after it ("© OpenStreetMap contributors © CARTO", or "Imagery: USGS"). On phones the street credit uses the short form, but it stays on screen.
+Attribution: the base credit is "Stations: Radio Browser · Map: US Census Bureau"; the active tile credit is added after it ("Map: USGS The National Map" for streets, or "Imagery: USGS" for satellite). On phones the street credit uses the short form, but it stays on screen.
 
 ## Search and the list are local
 

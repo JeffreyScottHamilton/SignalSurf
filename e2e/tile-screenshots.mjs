@@ -1,5 +1,5 @@
 // Real-network screenshots of the map detail: streets and satellite tiles at 1440x900 and 390x844.
-// Not part of `npm test` or `npm run e2e`: it needs internet access to basemaps.cartocdn.com and basemap.nationalmap.gov.
+// Not part of `npm test` or `npm run e2e`: it needs internet access to basemap.nationalmap.gov.
 // Usage: start a server for dist/ (for example `npx vite preview --port 5198 --strictPort`), then
 //   SS_BASE_URL=http://localhost:5198/ SHOTS_DIR=/some/dir node e2e/tile-screenshots.mjs
 import { createRequire } from 'node:module';

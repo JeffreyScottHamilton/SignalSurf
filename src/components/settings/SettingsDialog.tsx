@@ -150,7 +150,7 @@ export function SettingsDialog() {
                   </a>
                 </p>
                 <p>
-                  Map imagery from zoom 6 comes from CARTO (street tiles, © OpenStreetMap contributors) or USGS (satellite
+                  Map imagery from zoom 6 comes from USGS (street tiles from The National Map, or satellite
                   imagery); your browser requests those tiles only at that zoom or closer.
                 </p>
                 <p>

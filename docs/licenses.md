@@ -31,12 +31,11 @@ Checked 2026-11-17 against `node_modules/<pkg>/package.json` (`license` field) a
 
 ## Map tile services (not npm packages, not bundled)
 
-Loaded by the browser only at zoom 6 and above (`src/map/tileLayers.ts`). The sandbox proxy refused carto.com, openstreetmap.org and usgs.gov on 2026-11-17, so none of the terms below were re-checked; each needs a check before release.
+Loaded by the browser only at zoom 6 and above (`src/map/tileLayers.ts`). The terms below were not re-checked from this sandbox; each needs a check before release.
 
 | Service | Host | Attribution shown | Terms to check |
 |---|---|---|---|
-| CARTO `dark_all` basemap (streets) | `basemap.cartocdn.com` | "© OpenStreetMap contributors © CARTO" (short form on phones) | https://carto.com/attributions |
-| OpenStreetMap data (inside the CARTO tiles) | via the CARTO tiles | "© OpenStreetMap contributors" | https://www.openstreetmap.org/copyright (ODbL) |
+| USGS `USGSTopo` map (streets) | `basemap.nationalmap.gov` | "Map: USGS The National Map" (short form on phones: "Map: USGS") | https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits |
 | USGS `USGSImageryOnly` (satellite) | `basemap.nationalmap.gov` | "Imagery: USGS" | https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits |
 
 ## Notices and open items
@@ -44,4 +43,4 @@ Loaded by the browser only at zoom 6 and above (`src/map/tileLayers.ts`). The sa
 - The notices for every bundled package are in `public/THIRD-PARTY-NOTICES.txt`, which ships with the app (`dist/THIRD-PARTY-NOTICES.txt`).
 - Station logos and streams are loaded from third-party hosts. The app does not host or license them.
 - Open: the us-atlas terms above are not verified against the publisher. Re-check before a public release.
-- Open: the CARTO, OpenStreetMap and USGS tile terms in the table above are not verified from this sandbox. Re-check before a public release.
+- Open: the USGS tile terms in the table above are not verified from this sandbox. Re-check before a public release.

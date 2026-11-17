@@ -240,7 +240,6 @@ async function main() {
       tileRequests.push(route.request().url());
       return tileMode === 'png' ? route.fulfill({ status: 200, contentType: 'image/png', body: TILE_PNG }) : route.abort();
     };
-    await page.route('**basemaps.cartocdn.com/**', onTile); // the host is basemaps.cartocdn.com
     await page.route('**basemap.nationalmap.gov/**', onTile);
     const waitOpen = async (n, timeout = 3000) => {
       const end = Date.now() + timeout;
@@ -305,11 +304,11 @@ async function main() {
     }
     /**
      * Resets to the lower 48, then drags the map until (lat, lng) is in the middle of the canvas, and leaves it at about
-     * zoom 5 with that centre. The aim is refined at zoom 8, 11, 13 and 15 in turn: a pixel at zoom 15 is a tiny fraction of
+     * zoom 5 with that centre. The aim is refined at zoom 8, 11, 13, 15 and 17 in turn: a pixel at zoom 15 is a tiny fraction of
      * a degree, so the centre has to be right at the top zoom. A drag only starts inside the canvas, so the first aim
      * is made at the reset zoom, where the offset fits. Each drag starts from the map's own centre (data-center).
      */
-    const centreMapOn = async (lat, lng) => {
+    const centreMapOn = async (lat, lng, stayZoomed = false) => {
       const canvas = page.locator('.ss-map__canvas');
       const aim = async () => {
         for (let pass = 0; pass < 3; pass++) {
@@ -333,10 +332,11 @@ async function main() {
       await page.locator('button[aria-label="Reset map to the lower 48 states"]').click();
       await page.waitForTimeout(900);
       await aim();
-      for (const z of [8, 11, 13, 15]) {
+      for (const z of [8, 11, 13, 15, 17]) {
         await zoomTo(z);
         await aim();
       }
+      if (stayZoomed) return;
       // Zooming out about the middle keeps the aim, so the caller can zoom back in with + from here.
       for (let i = 0; i < 25 && (await mapZoom()) > 5; i++) {
         await page.locator('button[aria-label="Zoom out"]').click();
@@ -827,8 +827,9 @@ async function main() {
         const box0 = await canvas.boundingBox();
         const BORDER_POINT = [39.0, -102.05];
         expect(box0.width > 0, 'map has no size');
-        // Button zoom to the top, centred on St. Louis.
-        await centreMapOn(...BORDER_POINT);
+        // Button zoom to the top, centred on St. Louis. The aim is made at the top zoom itself: zooming out and back in
+        // would move the centre by a few hundredths of a degree, which is far off screen at the top zoom.
+        await centreMapOn(...BORDER_POINT, true);
         for (let i = 0; i < 30 && !(await plus.isDisabled()); i++) {
           await plus.click({ timeout: 1500 }).catch(() => {});
           await page.waitForTimeout(250);
@@ -836,8 +837,12 @@ async function main() {
         await page.waitForTimeout(500);
         const byButton = await measure();
         expect(await plus.isDisabled(), 'the + button did not reach the maximum zoom');
-        // Wheel over the middle of the map to the top, centred on St. Louis.
-        await centreMapOn(...BORDER_POINT);
+        // Wheel over the middle of the map to the top, centred on St. Louis: zoom out a few levels about the middle, then wheel in.
+        for (let i = 0; i < 3; i++) {
+          await page.locator('button[aria-label="Zoom out"]').click();
+          await page.waitForTimeout(300);
+        }
+        await page.waitForTimeout(500);
         const b2 = await canvas.boundingBox();
         await page.mouse.move(b2.x + b2.width / 2, b2.y + b2.height / 2);
         for (let i = 0; i < 40 && !(await plus.isDisabled()); i++) {
@@ -861,8 +866,8 @@ async function main() {
       }
     });
 
-    // o. Streets at Denver zoom 11: CARTO tiles, the CARTO and OpenStreetMap credit, and no unavailable chip.
-    await step('o', 'Denver at zoom 11 requests CARTO street tiles; attribution credits CARTO and OpenStreetMap', async () => {
+    // o. Streets at Denver zoom 11: USGSTopo tiles, the USGS credit, and no unavailable chip.
+    await step('o', 'Denver at zoom 11 requests USGS Topo street tiles; attribution credits USGS', async () => {
       tileMode = 'png';
       // Step n left the street tiles marked as failed; they are retried after a reload or a style change. Start clean.
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -873,15 +878,15 @@ async function main() {
       await zoomTo(11);
       await page.waitForTimeout(800);
       const urls = tileRequests.slice(before);
-      const carto = urls.filter((u) => u.includes('basemaps.cartocdn.com'));
-      expect(carto.length > 0, 'no CARTO tile requests at zoom 11');
-      const other = urls.find((u) => !u.includes('basemaps.cartocdn.com'));
-      expect(!other, `non-CARTO tile request in streets mode: ${other}`);
+      const topo = urls.filter((u) => u.includes('basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/'));
+      expect(topo.length > 0, 'no USGSTopo tile requests at zoom 11');
+      const other = urls.find((u) => !u.includes('basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/'));
+      expect(!other, `non-USGSTopo tile request in streets mode: ${other}`);
       const attr = await attribution();
       expect(attr.includes('Stations: Radio Browser') && attr.includes('Map: US Census Bureau'), `base credit missing: ${attr}`);
-      expect(attr.includes('CARTO') && attr.includes('OpenStreetMap'), `street credit missing: ${attr}`);
+      expect(attr.includes('USGS') && attr.includes('The National Map'), `street credit missing: ${attr}`);
       expect((await page.locator('.ss-map__status', { hasText: 'Detailed map unavailable' }).count()) === 0, 'unavailable chip shown while tiles load');
-      return `${carto.length} CARTO tile requests at zoom ${(await mapZoom()).toFixed(1)}`;
+      return `${topo.length} USGSTopo tile requests at zoom ${(await mapZoom()).toFixed(1)}`;
     });
 
     // p. Satellite view: USGS tiles after the toggle, the imagery credit, and the choice survives a reload.
@@ -895,10 +900,10 @@ async function main() {
         return b?.getAttribute('aria-label') === 'Map view' && b.getAttribute('aria-pressed') === 'true';
       }, null, { timeout: 5000 });
       await page.waitForTimeout(1000);
-      const usgs = tileRequests.slice(before).filter((u) => u.includes('basemap.nationalmap.gov'));
+      const usgs = tileRequests.slice(before).filter((u) => u.includes('basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/'));
       expect(usgs.length > 0, 'no USGS tile requests after the toggle');
       const attr = await attribution();
-      expect(attr.includes('Imagery: USGS') && !attr.includes('CARTO'), `imagery credit wrong: ${attr}`);
+      expect(attr.includes('Imagery: USGS') && !attr.includes('The National Map'), `imagery credit wrong: ${attr}`);
       const beforeReload = tileRequests.length;
       await page.reload({ waitUntil: 'domcontentloaded' });
       await waitForRows(10, 30000);
@@ -906,7 +911,7 @@ async function main() {
       await centreMapOn(...DENVER);
       await zoomTo(11);
       await page.waitForTimeout(800);
-      const afterReload = tileRequests.slice(beforeReload).filter((u) => u.includes('basemap.nationalmap.gov'));
+      const afterReload = tileRequests.slice(beforeReload).filter((u) => u.includes('basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/'));
       expect(afterReload.length > 0, 'no USGS tile requests after reload');
       return `${usgs.length} USGS tile requests after toggle; ${afterReload.length} after reload`;
     });
