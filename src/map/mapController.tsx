@@ -304,9 +304,9 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     const min = minZoomFor(el.clientWidth);
     map.setMinZoom(min);
     if (map.getZoom() < min) map.setZoom(min, { animate: false });
-    // markercluster builds its per-zoom grids from the minimum zoom it had when filled. A narrower panel lowers
-    // that minimum, and the next station added would read a grid that does not exist, so the grids are rebuilt.
-    if (Math.floor(map.getMinZoom()) < clusterFloor) rebuildClusters();
+    // markercluster builds its per-zoom grids from the minimum zoom it had when filled, and its tree walk assumes
+    // that minimum is the current one. Any change of the whole minimum (narrower or wider panel) rebuilds the grids.
+    if (Math.floor(map.getMinZoom()) !== clusterFloor) rebuildClusters();
   }
 
   const ro = typeof ResizeObserver === 'undefined'
