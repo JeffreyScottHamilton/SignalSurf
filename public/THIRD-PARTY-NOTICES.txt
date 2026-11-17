@@ -2,7 +2,7 @@ Roadtrip Radio third-party notices
 ========================================
 
 Station data: Radio Browser (https://www.radio-browser.info/), released to the public domain by its operator.
-Map shapes: US state outlines from the US Census Bureau via the us-atlas package ("a convenient redistribution of the Census Bureau's cartographic boundary shapefiles, 2017 edition, as TopoJSON"); world countries from Natural Earth via the world-atlas package.
+Map shapes: US state outlines from the US Census Bureau via the us-atlas package (ISC; the package README says: "This repository provides a convenient redistribution of the Census Bureau’s cartographic boundary shapefiles, 2017 edition as TopoJSON."). The Census Bureau's own terms for these files are not stated in the package and are not verified here. World countries from Natural Earth via the world-atlas package (ISC packaging; Natural Earth's terms not verified here).
 
 ----------------------------------------------------------------------
 Name: react
@@ -138,7 +138,9 @@ THIS SOFTWARE.
 ----------------------------------------------------------------------
 Name: us-atlas
 Version: 3.0.1
-Licence: ISC
+Licence: ISC (package.json "license": "ISC"; LICENSE file below)
+Description: "Pre-built TopoJSON from the U.S. Census Bureau." The Census data licence is not stated in the package: not verified.
+Used: states-10m.json, for the map's state outlines (src/map/landData.ts) and the state polygons in the catalogue build.
 
 Copyright 2013-2019 Michael Bostock
 

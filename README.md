@@ -1,16 +1,19 @@
-# SignalSurf
+# Roadtrip Radio
 
-SignalSurf is a web app for finding and playing live internet radio stations on a flat dark world map. It is a single static React, TypeScript and Vite app with no backend and no accounts, and it reads station data from the Radio Browser directory.
+Roadtrip Radio is a free map of US music radio stations that you can play in the browser. Find stations on a map of the lower 48 states, search by city, state or station name, filter by genre, and play a live stream. It is a static React, TypeScript and Vite app: no backend, no accounts, no analytics.
 
 ## Features
 
-- World map with station markers, grouped into clusters. The 1000 most-clicked stations with coordinates load at start. From zoom 3 the map then loads up to 500 of the most-clicked stations for the area in view, cached per area, and stations found by search that have coordinates are drawn on the map too.
-- Station search by name, city or country, with category filters: All, Music, News, Talk and Sports.
-- "Load more stations" under the list fetches the next page of results on demand (150 at a time, using the API's `offset`), and nothing is stored between presses.
-- Playback of live streams with play and pause, previous and next through the list you started from, volume and mute. The player shows "Live" only after the browser reports that the stream is playing.
-- Browser media controls (play, pause, previous, next) through the Media Session API.
-- Favourites and history, stored in this browser only.
-- Settings: default volume, and an About panel with the data attribution.
+- A map of US states with station markers grouped into clusters. It opens on the lower 48 states; Alaska, Hawaii and Puerto Rico are reachable by panning and zooming out. Selecting a station pans to it and opens a popup with Play.
+- A station list that matches the map: the search box and genre chips filter both, and the count line shows how many stations match.
+- Search by station name, city, state name or code, tag or genre. "texas", "tx" and "new york" all work.
+- Genre chips: All, Rock, Country, Pop, Hip-Hop & R&B, Jazz & Blues, Classical, Electronic, Oldies, Latin & World, Christian & Gospel, Indie & College, Folk & Americana. A station can be in more than one genre.
+- Playback of live streams with play and pause, previous and next through the list, volume and mute. The player shows "Live" only after the browser reports that the stream is playing.
+- Browser media controls through the Media Session API.
+- Favourites and history, kept in this browser only.
+- Settings: default volume, clearing favourites and history, and an About panel with the data sources and the catalogue date.
+
+Everything runs in the browser. The station catalogue is one static file, `public/catalog.json`, and search, filtering and the map are computed locally from it. The only network requests are the catalogue itself, station logos, and the station streams you play.
 
 ## Quick start
 
@@ -26,77 +29,65 @@ npm run dev
 | Script | Command | What it does |
 |---|---|---|
 | `npm run dev` | `vite` | Development server with hot reload |
-| `npm run build` | `tsc -b && vite build` | Typecheck, then write the production build to `dist/` |
+| `npm run build` | `tsc -b && vite build` | Typecheck, then write the production build to `dist/`. Makes no network requests. |
 | `npm run preview` | `vite preview` | Serve the built `dist/` folder locally |
 | `npm run typecheck` | `tsc -b --noEmit` | TypeScript check without writing output |
 | `npm run lint` | `eslint . --max-warnings=0` | ESLint with no warnings allowed |
 | `npm test` | `vitest run` | Unit tests (Vitest, jsdom) |
-| `npm run e2e` | `node e2e/smoke.mjs` | Browser smoke test (see below) |
+| `npm run e2e` | `node e2e/smoke.mjs` | Browser smoke test against `npm run preview` on port 4173. Set `PK_BASE_URL` to test another server. Uses the Chromium that Playwright already has installed. |
+| `npm run e2e:live` | `node e2e/live-playback.mjs` | Real playback on four catalogue stations, one per stream host. Needs internet access to those hosts. Prints a table and `LIVE-PLAYBACK: n/4`. |
+| `npm run catalog` | `node --use-env-proxy scripts/build-catalog.mjs` | Rebuilds `public/catalog.json` from the Radio Browser directory. Needs network access. |
 
-The end-to-end script starts `npm run preview` on port 4173 unless `SS_BASE_URL` points at a running server. It uses a Playwright install that must already be available globally, since Playwright is not in `package.json`. Station data comes from the live Radio Browser API. Only the audio bytes are replaced with a silent local stream.
+### When to refresh the catalogue
 
-## Production build and deployment
+The catalogue is a snapshot. Run `npm run catalog` when you want the station list to reflect the directory as it is now, for example before a release, or when stations you know are missing or closed. The script prints a summary (raw count, kept, drop reasons, genre counts, coordinates, state sources); commit the new `public/catalog.json` with any rule change. The build never fetches, so builds are the same for the same catalogue file.
 
-Run `npm run build`. The output is the static `dist/` folder, which any static file host can serve.
+## Deployment
 
-- Serve it over HTTPS. The app only requests HTTPS resources (the directory API, stream URLs and station icons), so an HTTPS page avoids mixed-content blocks.
+Run `npm run build` and serve the static `dist/` folder from any static host.
+
+- Serve it over HTTPS. Station streams and logos are HTTPS only, and an HTTPS page avoids mixed-content blocks.
 - The build needs no environment variables and no secrets.
-- The app has one page (`index.html`) and no client-side routes. The code does not use a router, `pushState` or `location` for navigation, so the host needs no rewrite rules.
-- `vite.config.ts` sets no `base`, so asset paths start at `/`. Serve the app from the root of its host, or set `base` in `vite.config.ts` before building for a sub-path.
+- The app has one page and no client-side routes, so the host needs no rewrite rules.
+- `vite.config.ts` sets no `base`, so asset paths start at `/`. Serve from the root of the host, or set `base` before building for a sub-path.
 
-## Data source and attribution
+## Data source and licences
 
-Station data comes from the [Radio Browser](https://www.radio-browser.info/) community directory. The app finds a server at runtime from the directory's server list, with fixed fallbacks. Radio Browser is run by volunteers and can be slow or unavailable.
+- **Stations:** the [Radio Browser](https://www.radio-browser.info/) community directory. Its site states that the data is in the public domain. The catalogue keeps only stations that have an HTTPS stream, a tag that maps to a music genre, and no non-music tag. Details: [docs/data-source.md](docs/data-source.md).
+- **Map shapes:** US state outlines from the US Census Bureau through the `us-atlas` package (ISC licence in the package). The rest of the world is from Natural Earth through the `world-atlas` package (ISC packaging; the Natural Earth terms are not verified here).
+- **Libraries:** Leaflet, markercluster, React, hls.js, Inter and others. Their licences and the notices are in [docs/licenses.md](docs/licenses.md) and [public/THIRD-PARTY-NOTICES.txt](public/THIRD-PARTY-NOTICES.txt), which ships with the app.
 
-- [docs/data-source.md](docs/data-source.md): how the API is used, with the checks behind each claim.
-- [docs/licenses.md](docs/licenses.md): licences of the bundled packages and the data, with the sources quoted.
-
-Station data is public domain according to the Radio Browser site. Map shapes come from Natural Earth through the `world-atlas` package. The map and About panel credit both sources.
+The map and the About panel credit Radio Browser, the US Census Bureau and Natural Earth.
 
 ## Known limitations
 
-- Some stations do not play in a browser. Common causes are a stream format the browser cannot decode, a stream that refuses browser playback, a region restriction, or a station that has gone offline. The player shows a message when this happens.
-- Category filters are approximate. They are based on the free-text tags that stations provide, so a station can be missing from a category or appear in one it does not fit.
-- Only stations with coordinates appear on the map. Stations without coordinates are listed and can be played, but are never placed on the map.
-- The map starts with the 1000 most-clicked stations with coordinates, then adds up to 500 per area as you move and zoom (from zoom 3). It is not a complete index: an area shows its most-clicked stations, not every station in it.
-- Favourites and history are stored in this browser's `localStorage`. They are not synced between devices or browsers.
-- The app does not show song titles or other track metadata. It shows the station name and the playback status.
-- Station details come from Radio Browser's volunteer-maintained records and can be wrong. For example, one sampled station had a latitude outside the valid range; the app drops such coordinates but cannot detect a swapped pair (see [docs/data-source.md](docs/data-source.md)).
+- **Only stations with coordinates appear on the map.** The catalogue has 2,721 stations and 998 of them have coordinates inside the US. The other stations are listed, searchable and playable, but they are never placed on the map.
+- **Genre filters are approximate.** They come from the free-text tags and station names that stations provide. A station can be missing from a genre, or in one it does not fit. A station whose tags give a genre is classified by its tags. Only when the tags give none is a whole-word genre in its name used, and a hard-exclude word in the name (news, sports, sermon, and similar) blocks that (see [docs/decisions.md](docs/decisions.md)).
+- **Untagged stations with no genre in their name are left out.** They cannot be shown to be music, so they are not in the catalogue. Stations tagged only "music" or "variety" are kept and appear under All only.
+- **Some streams fail in browsers.** Common causes are a codec the browser cannot decode (AAC is not in every browser), a stream that refuses browser playback, a region restriction, or a station that has gone offline. The player shows a message and a Try again button.
+- **The catalogue is a snapshot.** It is refreshed only when someone runs `npm run catalog`, so a station that closes stays until the next refresh.
+- **Favourites and history are local.** They are stored in this browser's `localStorage` and are not synced between devices or browsers.
+- **No track information.** The app shows the station name and the playback status, not the song or artist.
 
 ## Project structure
 
-- `src/api`: Radio Browser client, record normalisation and category mapping.
+- `src/catalog`: the catalogue loader, the search and filter (`search.ts`), the music and state rules shared with the build script (`rules.mjs`), and the genre labels.
+- `src/state`: the explore state (query, genre, list paging) and the map's station list, both derived from the catalogue.
+- `src/map`: the Leaflet map, the US state and world land layers, and marker helpers.
 - `src/audio`: the playback controller, which owns the single audio element.
-- `src/components`: React UI, split into `common`, `layout`, `sidebar`, `player`, `views` and `settings`.
-- `src/lib`: small shared helpers: the store, formatting and safe `localStorage` access.
-- `src/map`: the Leaflet map, country shapes and marker helpers.
-- `src/state`: stores for search results, view and selection, and map data.
-- `src/storage`: favourites, history and settings, saved in `localStorage`.
-- `src/styles`: design tokens and base CSS.
-
-Top-level source files are `src/App.tsx`, `src/main.tsx` and `src/types.ts`. Other folders: `e2e/` (smoke test), `docs/` (decisions and data notes), `public/` (static files).
-
-Design decisions are recorded in [docs/decisions.md](docs/decisions.md).
+- `src/storage`: favourites, history, settings and the one-time migration from the old keys.
+- `src/components`: the React UI, in `common`, `layout`, `sidebar`, `player`, `views` and `settings`.
+- `src/lib`, `src/styles`: shared helpers, the store, formatting, and the design tokens.
+- `scripts/build-catalog.mjs`: builds `public/catalog.json`.
+- `e2e/`: the smoke test and the live playback check.
+- `docs/`: design decisions, the data source, and licences.
+- `src/brand.ts`: the app name, tagline and description.
 
 ## Accessibility and keyboard use
 
-- Tab order follows the page: a "Skip to stations" link, the header navigation (Explore, Favorites, History), the settings button, the station sidebar, the map (zoom buttons and station markers), then the player bar.
-- Enter or Space on a station row starts that station. Rows are buttons.
-- Enter on a focused map marker clicks it. Markers are focusable because `src/map/mapController.tsx` sets Leaflet's `keyboard` option to `true`.
-- Space toggles playback when focus is not on a button, link, input, select or text area. On a focused button, Space activates that button.
-- Escape closes the settings dialog and the open map popup. For the popup, focus must be inside the map.
-- Focus is shown with a 2px outline on `:focus-visible`.
-- The CSS has `prefers-reduced-motion` rules for transitions and animations in the sidebar, player and views.
-
-## Station catalogue
-
-The app ships one pre-built file, `public/catalog.json`, with the US music stations it lists and maps.
-Nothing is fetched at runtime except the click counter. `npm run build` never fetches, so builds are deterministic.
-
-To refresh the catalogue (needs network access to the Radio Browser directory):
-
-```sh
-npm run catalog
-```
-
-The script (`scripts/build-catalog.mjs`) prints a summary: raw count, kept, drop reasons, per-genre counts, coordinates and state sources. The music, genre, state and coordinate rules are in `src/catalog/rules.mjs`, shared with the unit tests in `src/catalog/rules.test.ts`. Commit the regenerated `public/catalog.json` with the rules change, if any.
+- Tab order follows the page: the skip link, the header tabs (Explore, Favorites, History), the settings button, the search box and genre chips, the station list, the map, then the player bar.
+- Enter or Space on a station row plays that station. Rows are buttons.
+- The map is one tab stop: the map container. Markers and clusters are not tab stops, and clicking a marker opens its popup.
+- Escape closes the settings dialog and the map popup.
+- Focus is shown with an outline on `:focus-visible`.
+- Animations and transitions respect `prefers-reduced-motion`.

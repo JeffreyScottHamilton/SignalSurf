@@ -1,88 +1,92 @@
-# Data source: Radio Browser API
+# Data source: Radio Browser and the Roadtrip Radio catalogue
 
-Research date: 2026-11-13. Every claim below was checked with the command or URL shown. Anything that could not be checked is marked **not verified**.
+The app plays stations from a catalogue it ships as `public/catalog.json`. The catalogue is built once from the Radio Browser community directory by `npm run catalog` (`scripts/build-catalog.mjs`). The browser never queries the directory.
 
-## Key findings
+API facts below were checked on 2026-11-13 with the commands or URLs shown. The catalogue numbers are from the build run on 2026-11-17. Anything that could not be checked is marked **not verified**.
+
+## Licence and attribution
 
 1. **Licence (verified 2026-11-13):** the station data is public domain.
    - `https://www.radio-browser.info/` (home page): "Data license: public domain, software license: GPL, server software: open source" and "Everyone is free to use the collected data (station names, tags, links to stream, links to homepages, language, country, state) in their works. I give all the rights I have at the accumulated data to the public domain."
-   - `https://gitlab.com/radiobrowser/radio-database/-/raw/main/README.md` (database repository, `## License`): "All of the content of this repository is in the public domain."
-   - `https://de1.api.radio-browser.info/` (API docs): "This webservice can be used freely but without guarantee to work."
-   - The API server code is AGPL-3.0 (`https://gitlab.com/radiobrowser/radiobrowser-api-rust/-/raw/master/LICENSE`). That licence covers the server software, not the data, and SignalSurf does not bundle the server.
-2. **Attribution (verified 2026-11-13):** no page fetched requires credit. The API docs ask for a descriptive `User-Agent` and give the reason: "This also helps me to know which apps are using this service, so I can keep the list of apps up to date". The FAQ (`https://www.radio-browser.info/faq`) asks for nothing similar. SignalSurf still credits Radio Browser in the map attribution and in the About panel. Crediting is good practice, not a legal requirement found in these sources.
-3. **Rate limits:** not documented. No rate-limit headers were returned (`curl -sS -D - ...` showed none). Not verified under load. The app keeps request volume low: one server lookup per session, one map load per session, cached near-queries, and no per-keystroke requests (350 ms debounce).
-4. **Credentials:** none needed. Every request in this document was made without a key or login. The docs mention no key.
-5. **Geo coverage:** only a minority of popular stations have coordinates. Of the top 1000 by clicks (hidebroken, https), 358 have coords (35.8%). With `has_geo_info=true`, the top 1000 are all geo-located, and 10,822 stations in total have coords (hidebroken only, no https filter). One sampled geo record is wrong: "Bangkok Community Radio" has `geo_lat=100.5018` (out of range; the longitude 13.7563 looks swapped in). The normaliser rejects out-of-range values but cannot detect a swap that stays in range.
+   - `https://gitlab.com/radiobrowser/radio-database/-/raw/main/README.md` (`## License`): "All of the content of this repository is in the public domain."
+   - The API server code is AGPL-3.0 (`https://gitlab.com/radiobrowser/radiobrowser-api-rust/-/raw/master/LICENSE`). That licence covers the server software, not the data, and the app does not include the server.
+2. **Attribution:** no page fetched requires credit. The app credits Radio Browser in the map attribution ("Stations: Radio Browser") and in the About panel anyway.
+3. **Credentials:** none. The build makes unauthenticated GET requests.
 
-## Who runs it and client etiquette
+## What the build asks for
 
-- Operator: one volunteer, per the docs page ("I have been keeping it online since December, 2015 ... downtimes are possible"). Contact details are on the docs page; they are not copied here. Check: `curl -sS https://de1.api.radio-browser.info/`.
-- The docs ask for a descriptive `User-Agent` ("appname/appversion"). **Browsers do not let a page set `User-Agent`**, so the app sends none. The requests still succeed without it: `curl -A "" https://de1.api.radio-browser.info/json/stations/search?limit=1` returned HTTP 200.
-- The docs ask clients to count a play with `GET /json/url/{stationuuid}`. Checked with an all-zero UUID (no real station is touched): HTTP 404, so the route exists and rejects unknown IDs. Not verified that a real play increments the count; the app calls it fire-and-forget.
-- Server list: `curl -sS https://all.api.radio-browser.info/json/servers` returned `de1.api.radio-browser.info` twice (IPv4 and IPv6). `de2` answered `/json/stats` with HTTP 200. `fi1` and `at1` did not connect from this sandbox (environment limit). The app's order is: discovered hosts (random first pick), then `de1`, `de2`, `fi1`.
-- CORS: `access-control-allow-origin: *` on API responses (`curl -sS -D - -H "Origin: https://example.org" ...`). A plain GET needs no preflight, so the app sends no custom headers.
-- Server health: `GET /json/stats` returned `{"stations":52533,"stations_broken":1084,"countries":224,"software_version":"0.7.50", ...}`.
-- Direct `https://api.radio-browser.info/` is refused by the sandbox proxy (CONNECT 403). The docs were read from `https://de1.api.radio-browser.info/` instead.
+- **Server discovery:** `GET https://all.api.radio-browser.info/json/servers`. Host names are checked against `*.api.radio-browser.info`. If discovery fails, the fallbacks `de1`, `de2` and `fi1` are used.
+- **Query:** `GET https://<server>/json/stations/search?countrycode=US&hidebroken=true&is_https=true&limit=100000&order=clickcount&reverse=true`. One query returns every US station the directory lists as working with an HTTPS stream.
+- **Failover:** a failed host is followed by the next one (up to four). The first answer is used.
+- **Node's `fetch`** is used first with `--use-env-proxy`; `curl` is the fallback when `fetch` cannot connect.
+- **User-Agent:** the build sends Node's default. The API docs ask clients for a descriptive `User-Agent` ("appname/appversion"). This is an open item: the build should send one. **Not done.**
 
-## Data quality (samples fetched 2026-11-13)
+The API docs (`https://de1.api.radio-browser.info/`) say: "This webservice can be used freely but without guarantee to work." The directory is volunteer-run, so the catalogue is built by hand and committed, not fetched at runtime.
 
-| Sample | Rows | Coords | `lastcheckok=1` | https stream | `hls=1` | favicon https |
-|---|---|---|---|---|---|---|
-| Top 1000 by clicks (hidebroken, https) | 1000 | 358 | 1000 | 1000 | 128 | 724 |
-| Top 1000 with `has_geo_info=true` | 1000 | 1000 | 1000 | 1000 | 115 | 765 |
-| Top 5000 with `has_geo_info=true` | 5000 | 5000 | 5000 | 5000 | 473 | 3642 |
+## Catalogue build, 2026-11-17
 
-- With `hidebroken=true`, every sampled row had `lastcheckok=1`. Not verified that `hidebroken` is exactly `lastcheckok=1`.
-- No `(0,0)` coordinates were seen. One out-of-range latitude was seen (see finding 5).
-- `countrycode` was present for 994 of the top 1000 and 100% of the geo samples. `state` was present for 445 of the top 1000 (45%) and 3606 of the top 5000 geo rows (72%).
-- Some `favicon` values are `http://` (39 of the top 1000) and are dropped. Some are empty.
-- Names can carry leading spaces (`" Kamakura FM"`), so names are trimmed and whitespace is collapsed.
-- `tags` are comma separated. Individual tags can contain spaces (`"sports news"`) and can be very long (one tag was 79 characters). Tags over 24 characters are dropped.
-- `country` is the long form, for example `"The United Kingdom Of Great Britain And Northern Ireland"`. The short name comes from `countrycode` via `Intl.DisplayNames`.
-- Two samples (top 1000 and top 5000 geo) gave 6000 raw rows, 5528 after dedupe (the overlap was removed).
+Command: `npm run catalog` (exit 0). Source: de1.api.radio-browser.info.
 
-## Search behaviour (verified)
+| Measure | Value |
+|---|---|
+| Raw US records returned | 4,712 |
+| Kept | 2,721 (57.7%) |
+| Dropped: untagged | 1,220 |
+| Dropped: hard-exclude tag or name word | 534 |
+| Dropped: no genre | 226 |
+| Dropped: non-HTTPS stream | 0 |
+| Dropped: duplicate (same id, then same stream URL) | 11 |
+| Dropped: unreadable record | 0 |
+| Kept by name (no genre from tags) | 231 |
+| Kept with no genre (All only) | 103 |
+| With coordinates (shown on the map) | 998 |
+| Coordinates dropped (outside every US box) | 11 |
+| `stateCode` from ISO code | 164 |
+| `stateCode` from state text | 1,818 |
+| `stateCode` from coordinates in a state outline | 91 |
+| `stateCode` null | 659 |
 
-- `order=clickcount&reverse=true` sorts by popularity.
-- `name=JAZZ` and `name=jazz` both returned results: `name` matches substrings, case-insensitively.
-- `state=Berlin` and `state=berlin` both returned results.
-- **`country` is case-sensitive.** `country=japan` returned 0, while `country=Japan` and `country=Jap` returned 60. The app therefore title-cases the query before sending it as `country=`.
-- `tag=news` returns popular news-tagged stations.
-- `has_geo_info=true`, `geo_lat`, `geo_long` and `geo_distance` (metres) work as documented.
+Genre counts (a station can count in more than one genre):
 
-## Live proof (2026-11-13)
+| Genre | Stations | Genre | Stations |
+|---|---|---|---|
+| Rock | 609 | Latin & World | 168 |
+| Country | 229 | Christian & Gospel | 398 |
+| Pop | 477 | Indie & College | 231 |
+| Hip-Hop & R&B | 292 | Folk & Americana | 86 |
+| Jazz & Blues | 262 | Oldies | 376 |
+| Classical | 160 | Electronic | 312 |
 
-Script: `/tmp/claude-0/-home-user/56aa8976-1187-5e42-9581-774146525f7d/scratchpad/s1-live.sh`. It uses `hidebroken=true&is_https=true&limit=60&order=clickcount&reverse=true`, except (f), which uses limit 1000.
+Every genre has at least 30 stations, so none was dropped from the genre list.
 
-```
-(a) popular count=60 first3=RTL | Christmas FM Non-stop! | Radio Armisa
-(b) name=jazz count=60 first3=IBIZA CHILLOUT LOUNGE - ... | Smooth Jazz Lounge | 0R - PIANO JAZZ LOUNGE || ...
-(c) country=japan count=0 first3=
-(c2) country=Japan count=60 first3=Retro-Ko Radio | SOUND UP STATION NFRS | NHK WORLD RADIO
-(d) state=berlin count=60 first3=Deutschlandfunk | DLF | MP3 128k | Deutschlandfunk | DLF | AAC 192k | ...
-(e) tag=news count=60 first3=RMC Info Talk Sport | SWR3 | Deutschlandfunk | DLF | MP3 128k
-(f) map geo count=1000 first3=Christmas FM Non-stop! | Radio Armisa | Classic Vinyl HD
-```
+File size (`public/catalog.json`):
 
-Line (c) is the literal `country=japan` from the brief. It returns 0 because of case sensitivity; (c2) shows the title-cased form that the app sends.
+| | Bytes | KiB |
+|---|---|---|
+| Before the trim (2,689 stations, long keys, five tags, six-decimal coordinates) | 1,042,598 | 1,018 |
+| After the trim (2,721 stations) | 826,808 | 807.4 |
+| Gzip, after the trim (Node zlib, level 6) | 271,575 | 265.2 |
 
-## How the app uses the API
+The target was 900 KiB. The trim (short keys, coordinates to four decimals, three tags, no `codec` or `bitrate`) brought the file under it. Homepage query strings were left in place: they total under 1 KB.
 
-- **Discovery:** `GET https://all.api.radio-browser.info/json/servers`, 5 s timeout, names validated against `*.api.radio-browser.info`, shuffled, then `de1`, `de2`, `fi1` appended. Resolved once per session.
-- **Failover:** a network error, timeout, or 5xx triggers one retry on the next host. A 4xx is not retried. The working host is remembered.
-- **Common filters:** `hidebroken=true&is_https=true` on every request.
-- **Search results on the map:** the explore results that have coordinates are drawn as markers, whether or not they are in the starting set (`mergeMarkerStations`). Search does not move the map.
-- **Search:** empty query gives popular stations. A query runs three parallel requests (`name`, `country` title-cased, `state`), merged, deduped, and sorted by clicks. A category adds a `tag` hint (`music`, `news`, `talk`, `sport`) and a client-side filter. If an empty-query category returns fewer than 20 after filtering, one popular request with limit 500 is added and filtered.
-- **Map:** `has_geo_info=true`, popularity order, limit 1000, `offset` 0 only. Page 0 is the starting set (about 1.3 MB) and is requested once per session. No other page is loaded. A failed page is not cached.
-- **Near:** `geo_lat`, `geo_long`, `geo_distance` in metres, `order=clickcount&reverse=true`, `limit=500`. The centre is snapped to a 0.5 degree grid (`snapToHalfDegree`), and the radius is rounded up to 150, 300, 600, 1200 or 2500 km (`nearRadiusBucketKm`). The request uses the snapped centre and the bucketed radius, and the cache key (`nearKey`) is built from the same values, so a cache hit always matches the request. The map requests it from zoom 3 after a 600 ms rest, with a radius of half the visible diagonal (centre to corner). A new request aborts the one in flight.
-- **Click count:** `GET /json/url/{id}` after playback starts. Errors are ignored.
-- **Normalisation:** a record is dropped without a uuid, a name, or an https stream. Coordinates must be finite, within range, and not (0,0). Favicons must be https. Homepages must be http(s). Tags are split, lower-cased, trimmed, de-duplicated, capped at 8 kept tags, and categories are classified from all valid tags.
-- **Dedupe:** first occurrence wins, matched by id, then stream URL, then lower-cased name plus country code. Two different stations with the same name in one country collapse into one. This is the contract's rule; it can hide a real station.
+## Data quality notes
+
+- Names can carry leading or doubled spaces. Names are trimmed and whitespace is collapsed.
+- Tags are comma-separated, lower-cased, de-duplicated, and tags over 24 characters are dropped. Three tags are kept per station.
+- `favicon` values can be `http://` and are dropped. `homepage` can be `http` or `https`.
+- The directory has coordinates for a minority of stations, and a few are wrong. The build drops a coordinate pair outside the US boxes instead of moving it (11 in this build). A swapped pair that stays inside a US box cannot be detected.
+- The directory's `state` text is free text. A state code is used only when it is an ISO code, an exact state name or abbreviation, or lies inside a state outline (see `docs/decisions.md`).
+- Stations with a stream that is only `http://` are not in the catalogue (the query asks for HTTPS streams, so this count is 0).
+
+## Live checks made by the app's tests
+
+- `e2e/smoke.mjs` checks the count line, the list and the map against the catalogue file (`npm run e2e`).
+- `e2e/live-playback.mjs` plays one station per stream host (`npm run e2e:live`). Stream hosts are not Radio Browser; the report lists the answer of each.
 
 ## Not verified
 
-- Natural Earth's own terms (`naturalearthdata.com` answers 403 through the sandbox proxy). The map credit relies on the app's About text and the world-atlas README; see `docs/licenses.md`.
-- Rate limits under real load.
-- That a real play increments `clickcount` through `/json/url/{id}`.
-- Server-side behaviour of the `User-Agent` request (the app cannot set it from a browser).
-- Hosts `fi1` and `at1` (not reachable from this sandbox).
+- Rate limits of the directory under load. No rate-limit headers were seen on 2026-11-13.
+- Whether a real play increments `clickcount` through `/json/url/{stationuuid}`. The player calls it once per station when the stream reaches Playing (`reportClick` in `src/api/radioBrowser.ts`; errors are ignored). The catalogue's click counts come from the build query and are not updated by the app.
+- Natural Earth's own terms (`naturalearthdata.com` answered 403 through the sandbox proxy).
+- The US Census Bureau data's licence terms as shipped in `us-atlas`; see `docs/licenses.md`.
+- Hosts `fi1` and `at1` (not reachable from the sandbox on 2026-11-13).

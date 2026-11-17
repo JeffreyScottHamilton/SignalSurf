@@ -1,59 +1,86 @@
 # Decisions
 
-Short log of the architectural decisions in this repository, with the reason for each. Each entry describes what the code does today; the file references point to where it happens.
+Short log of the decisions in this repository, with the reason for each. Each entry describes what the code does today; file references point to where it happens.
 
-## No backend, static site
+## US music only
 
-SignalSurf is a single-page React, TypeScript and Vite app. `npm run build` writes a static `dist/` folder, and no server code is in the repository. There are no accounts, no analytics and no tracking. No secrets are needed, so the build reads no environment variables.
+Roadtrip Radio lists US music stations and nothing else. The product decision (`.ultimatum/specs/roadtrip.md`) was to make the app a map of American music radio, not a directory of every station worldwide. The earlier app searched the whole directory and had news, talk and sports filters, which did not fit a music map. Reason: a smaller, clearer product, and a catalogue that can be checked. Stations outside the US, and non-music stations, are not in the catalogue (`scripts/build-catalog.mjs`, `src/catalog/rules.mjs`).
 
-## Radio Browser as the only data source, with runtime server discovery
+## A prebuilt static catalogue instead of live queries
 
-All station data comes from the Radio Browser API (`src/api/radioBrowser.ts`). The first request in a session asks `https://all.api.radio-browser.info/json/servers` for the current server list. Names are checked against `*.api.radio-browser.info`, shuffled, and followed by `de1`, `de2` and `fi1` as fallbacks. A network error, timeout or 5xx is retried once on the next server, and the server that worked is remembered for the session. Discovery is resolved once per session. Reason: the service is volunteer-run and its hostnames can change, so a hard-coded list alone would break over time.
+The app ships one file, `public/catalog.json`. The build script (`npm run catalog`) fetches the US stations from the Radio Browser directory once, applies the music rules, and writes the file. Search, genre filters, the station list and the map all run in the browser from that file (`src/catalog/`, `src/state/mapData.ts`). Reasons:
 
-## Requests use `hidebroken` and `is_https`
+- The directory is run by volunteers and can be slow or unavailable. A live query per search or per map area made the app depend on it at every step.
+- The map shows every station at once, so it needs the whole list locally, not one page at a time.
+- Builds are deterministic: `npm run build` makes no network requests.
+- Fewer requests to a third party, and no per-keystroke traffic.
 
-Every API request sends `hidebroken=true&is_https=true` (`apiList`). The app is served over HTTPS, and a browser would block an `http://` stream as mixed content anyway. Reason: fewer dead or unplayable results, and no requests the browser cannot complete.
+The trade-off is that the catalogue is a snapshot, refreshed by hand (see the README).
 
-## HTTPS-only streams
+## The music rule: tags first, names second
 
-A station is dropped unless its stream URL is `https:` (`src/api/normalize.ts`). Favicons must also be `https:`; homepages may be `http:` or `https:`. Reason: the same mixed-content rule. Stations that only offer `http:` are not shown, so the player never tries them.
+A station is kept only when all of these hold (`classifyDetailed` in `src/catalog/rules.mjs`):
 
-## Leaflet with bundled Natural Earth shapes, no tile provider
+1. No tag is a hard exclude. The list is `news`, `talk`, `sports`, `sport`, `preaching`, `teaching`, `sermons`, `bible`, `scanner`, `weather`, `traffic`, `old time radio`, `otr`, `comedy`, `audiobooks` and `podcast`, matched as a whole tag or whole word. A station with one is dropped.
+2. Its tags give at least one genre. Each tag is matched against a keyword list for each genre (whole words, accents and punctuation folded). A station can have several genres.
 
-The map is Leaflet (`src/map/mapController.tsx`) drawn over country shapes from `world-atlas/countries-50m.json`, which is bundled and loaded as a separate chunk (`src/map/landData.ts`). There are no raster or vector tile requests. Reason: no third-party map requests (privacy), no API key, and a flat dark style that matches the design. The trade-off is less detail at high zoom. Zoom is capped at 8.
+Only when the tags give no genre is the **name** used (`nameGenres`): a whole-word genre word in the name ("Classic Rock 101") admits the station, marked `by: name`. Two guards apply to names:
 
-## Marker clustering, 1000 popular stations up front, nearby stations on demand from zoom 3
+- A hard-exclude word in the name blocks name admission (the tag list above plus `espn`, `npr`, `sermon`, `police`, `weather`, `traffic`, `scanner`, `bible`).
+- A decade word ("80s", "90's") does not admit a station when the name also holds a Christian network word (`Christian`, `K-LOVE`, `KLOVE`, `Air1`, `Salem`, `Moody`, `Family Radio`, `CCM`). Such a name is religious programming, not oldies.
 
-On load, the app asks for the 1000 most-clicked stations that have coordinates (`has_geo_info=true`, `order=clickcount`, `limit=1000`, `offset=0`, `fetchMapStationsPage`). Nothing else is loaded up front: there are no background pages, and data-saver or 2G settings do not change this. From zoom 3, once the map has rested for 600 ms, the app asks for the 500 most-clicked stations within half the visible diagonal of the centre (centre to corner, rounded up to 150, 300, 600, 1200 or 2500 km, capped at 2500 km), with the same 0.5 degree snapped centre and radius bucket in the cache key and the request (`scheduleLoad`, `loadNear`, `nearKey`). A request already loaded is not repeated. A new request aborts the one in flight, and an aborted request is cancelled on the wire unless another caller still waits for it. The chip "Loading stations in this area…" appears only after a nearby request has been in flight for more than 400 ms (`nearStatus`). Reason: the map shows what the user is looking at, and the starting set stays small. Markers are grouped with `leaflet.markercluster` (`maxClusterRadius` 22). Existing markers are not rebuilt when a nearby result arrives, and the map does not move. Stations from a search with coordinates are drawn as well, even when they are outside the starting set (`WorldMap` passes the explore results to `mergeMarkerStations`), and the map does not move for them either; selecting a result still pans to it. The map keeps at most 8000 stations (`mapData.ts`, `CAP`).
+A station whose tags are only generic music words (`music`, `variety`, `eclectic`, `freeform`, `various`, `community radio` and similar, see `GENERIC_MUSIC_TAGS`) is kept with no genres: it shows under All only. Any other tags that give no genre, with no genre word in the name, drop the station as `no-genre`; a station with no tags at all is `untagged` and dropped. Reason: tags are what stations provide about themselves; names are a fallback that is only used when the tags say nothing, and the guards stop the fallback from admitting news, sermons or religious stations.
+
+## State and city: never guessed
+
+`stateCode` is the first of these that applies (`normalizeRaw`, `stateFromIso`, `parseStateText`, `stateAtPoint`):
+
+1. The ISO code in the directory (`US-CA` and similar).
+2. An exact state name or abbreviation in the directory's `state` text.
+3. The point-in-polygon test of the station's coordinates against the US Census state outlines in `us-atlas` (build time only). Coordinates inside a US box but in no state (sea, Canada, Mexico) are kept only when the state is already known.
+4. Otherwise `null`.
+
+`city` is the remainder of the `state` text when it clearly contains more than the state ("New York NY" gives "New York"), and only when that text agrees with the chosen state code. Coordinates outside the US boxes (lower 48, Alaska, Hawaii and the territories) are dropped to `null`, never moved (`inUsBox`). Reason: a wrong state is worse than no state; the search and the list show "United States" for a station with no state.
+
+## Catalogue format: short keys and rounding
+
+To fit the file under 900 KiB without dropping stations, records use short keys (`CATALOG_KEYS` in `src/catalog/rules.mjs`: `i` id, `n` name, `u` stream, `h` homepage, `f` favicon, `s` state, `c` city, `t` tags, `g` genres, `x` hls, `a` lat, `o` lng, `k` clicks). `expandCatalogRecord` maps them back to the `Station` field names in the loader (`src/catalog/catalog.ts`) and in the e2e checks. Coordinates are rounded to 4 decimals, tags are capped at 3, and `codec` and `bitrate` are not written because no screen or player reads them. Keys whose value is null, false or empty are left out. Reason: the file is loaded on every visit, and the key names were most of its size.
+
+## Session and favourites are browser-local
+
+Favourites and history are stored in `localStorage` under `roadtrip:favorites:v1`, `roadtrip:history:v1` and `roadtrip:settings:v1` (`src/storage/`). History keeps 50 entries, newest first. A snapshot of each station is kept, so a saved station still shows its name if the catalogue changes. All storage goes through `safeStorage`, so the app still works when storage is blocked. Reason: no account or server to sync with.
+
+## Storage key migration from the old app
+
+The earlier app wrote `signalsurf:favorites:v1`, `signalsurf:history:v1` and `signalsurf:settings:v1`. On start, `migrateLegacyStorage` (`src/storage/migrate.ts`) does this for each store: when the new key is absent and the old key exists, it reads the old value through the sanitiser, adapts old snapshots (the old `region` and `country` fields become `city: null, stateCode: null`, or the catalogue record when the station id is in the catalogue), writes the new key, and removes the old one. Stations that are not in the catalogue, or not in the US, are kept and stay playable. Reason: favourites a user already saved should survive the change of app. The old key names remain only in this migration and its tests.
+
+## Map: US states from us-atlas, world land dimmed, whole-number zoom
+
+- The US state outlines come from `us-atlas/states-10m.json` (`src/map/landData.ts`). They are a separate chunk, loaded with a dynamic import, drawn as the lighter land with thin borders.
+- The rest of the world is `world-atlas/countries-50m.json`, drawn darker and muted (`--ss-map-land-dim`), so Canada and Mexico stay in view but do not compete with the US.
+- The map opens fitted to the lower 48 (`LOWER_48` in `mapController.tsx`). Pan bounds are `[5,-180]` to `[75,-50]`, so Alaska, Hawaii and Puerto Rico are reachable. Attribution: "Stations: Radio Browser · Map: US Census Bureau, Natural Earth".
+- The minimum zoom is a whole number (`minZoomFor` in `src/map/zoom.ts`), rounded up so the lower 48 span at least 60% of the panel. Reason: markercluster walks its grid from `minZoom - 1` but builds its top level at `floor(minZoom) - 1`. With a fractional minimum, stations that never cluster were dropped from the map; the grids are also rebuilt whenever the whole minimum changes.
+
+## Search and the list are local
+
+The search (`filterStations` in `src/catalog/search.ts`) is case-insensitive. Every whitespace-separated term must match a name, city, state name or code, tag or genre label, and the list is sorted by clicks. The list shows the first 150 matches, and "Load more" reveals the next 150 from the same local result (`src/state/explore.ts`). The map shows the same matches that have valid coordinates (`src/state/mapData.ts`), so the list and the map always agree. Reason: no requests per search, and one source of truth for both views.
 
 ## Stations without coordinates are listed, never placed
 
-A station with no coordinates, or with invalid ones, still appears in the lists and can be played. It is never drawn on the map (`mergeMarkerStations` in `src/map/markerSet.ts` keeps only stations where `hasValidCoords` is true). Coordinates are never guessed or copied from the country. Reason: a made-up position would show the wrong place for a real station.
+A station with missing or invalid coordinates is listed, searchable and playable, but it is never drawn on the map (`hasValidCoords` in `src/map/markerSet.ts`). Coordinates are never guessed or copied from a region. Reason: a made-up position would show a real station in the wrong place.
 
-## One audio element, session tokens, pause stops the stream
+## One audio element; pause stops the stream
 
-The player (`src/audio/player.ts`) owns a single `HTMLAudioElement`. Every change of station or state increments a `token`, and each event handler and async step returns early when its token is no longer current. This prevents two streams from playing at once and stops late events from an old station from changing the UI. Pausing a live stream stops it: `pause()` clears the source and reloads the element, so resuming reconnects to the live stream instead of resuming from a buffer. Reason: live radio has no meaningful position to resume from.
+The player (`src/audio/player.ts`) owns one `HTMLAudioElement`. Every change of station or state increments a token, and each event or async step returns early when its token is stale, so two streams never play at once and late events cannot change the UI. Pausing unloads the source, so resuming reconnects to the live stream instead of resuming a buffer. Reason: live radio has no meaningful position to resume.
 
 ## hls.js is loaded on demand
 
-`hls.js` is imported only when a station is marked `hls` or its stream path ends in `.m3u8` (`needsHls`, then `import('hls.js')` in `src/audio/player.ts`). Plain streams never download it. Reason: most stations do not need it.
+`hls.js` is imported only for a station marked `hls` or whose stream path ends in `.m3u8` (`needsHls`, then `import('hls.js')` in `src/audio/player.ts`). Plain streams never download it.
 
-## Category mapping is approximate
+## HTTPS-only streams and favicons
 
-Radio Browser tags are free text. `classifyTags` (`src/api/categories.ts`) matches keyword lists for music, news, talk and sports, using whole-word matches after folding accents and punctuation. The category filter also sends a server-side `tag` hint for the four categories. Results can be wrong in both directions, and the UI does not claim otherwise. Reason: there is no controlled vocabulary to map onto.
+A catalogue station is kept only when its stream is `https:` (`normalizeRaw`, `non-https` drop reason). Favicons must be `https:`; homepages may be `http:` or `https:`. Reason: the app is served over HTTPS, and a browser blocks `http:` streams as mixed content, so such a station could never play. The number dropped for this reason in the current build is 0, since the directory query already asks for HTTPS streams.
 
-## Favourites and history are local snapshots keyed by `stationuuid`
+## Small custom store and plain CSS
 
-Favourites and history store a copy of each station, keyed by its Radio Browser `stationuuid` (`station.id`) in `localStorage` under `signalsurf:favorites:v1` and `signalsurf:history:v1` (`src/storage/`). History keeps 50 entries, newest first, and moves an existing station to the top. A snapshot is kept so a saved station still shows its name after the directory changes or the station goes offline. All storage access goes through `safeStorage`, so the app still works when storage is blocked. Reason: no account or server to sync with.
-
-## The station list pages on demand with `offset`
-
-The list starts with the first 150 results, and "Load more stations" requests the next page with `offset` = pages loaded x 150 (`searchStationsPage`, `loadMore` in `src/state/explore.ts`), appending only stations not already listed. Nothing is stored between presses, and a new search discards the paging. Reason: the whole Radio Browser catalogue can be reached without fetching it all up front, and the user decides when to spend the requests.
-
-## Small custom store instead of a state library
-
-`src/lib/createStore.ts` is about one module: `createStore` plus a `useStore` hook built on `useSyncExternalStore`. Routing is not a library either: the three views are switched with `uiStore` state, and the URL does not change. Reason: the app has a few shared values (explore results, map stations, selection, player state) and no need for a state library or a router. The package list in `package.json` has neither.
-
-## Plain CSS with tokens
-
-Colours, spacing, radii and type sizes are CSS custom properties in `src/styles/tokens.css`. Components use plain CSS files with the `ss-` class prefix. Reason: the visual system is small and fixed, and a CSS framework would add weight and a second source of styles.
+`src/lib/createStore.ts` is a small store with a `useStore` hook built on `useSyncExternalStore`. The three views switch with state, and the URL does not change, so there is no router. Colours, spacing and type are CSS custom properties in `src/styles/tokens.css`; components use plain CSS with the `ss-` class prefix. Reason: the app has a few shared values and a fixed visual system, so a state library, a router or a CSS framework would add weight without a benefit.
