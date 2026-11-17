@@ -4,7 +4,7 @@ import 'leaflet.markercluster';
 import { createRoot, type Root } from 'react-dom/client';
 import { selectStation } from '@/state/ui';
 import type { Station } from '@/types';
-import { loadLandFeatures } from './landData';
+import { loadLandFeatures, loadStateFeatures } from './landData';
 import { SELECTED_ICON, STATION_ICON } from './markerIcons';
 import { MapPopupCard } from './MapPopup';
 import { hasValidCoords } from './markerSet';
@@ -19,18 +19,23 @@ export interface MapController {
   setSelected(station: Station | null): void;
   zoomIn(): void;
   zoomOut(): void;
+  /** Returns the view to the lower 48 states fit. */
+  resetView(): void;
   dispose(): void;
 }
 
-const ATTRIBUTION = 'Stations: Radio Browser · Map: Natural Earth';
-const WORLD_BOUNDS = L.latLngBounds([-75, -185], [85, 185]);
-const MAX_ZOOM = 8;
+const ATTRIBUTION = 'Stations: Radio Browser · Map: US Census Bureau, Natural Earth';
+// Bounds the pan: the lower 48, Alaska, Hawaii and Puerto Rico are reachable, the rest of the world is not.
+const PAN_BOUNDS = L.latLngBounds([5, -180], [75, -50]);
+const LOWER_48 = L.latLngBounds([24.5, -125], [49.5, -66.5]);
+const LOWER_48_LNG_SPAN = 58.5;
+// The lower 48 never get narrower than this share of the panel width.
+const LOWER_48_MIN_SHARE = 0.6;
+const FIT_PADDING: [number, number] = [24, 24];
+const MAX_ZOOM = 9;
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
 const FOCUS_MIN_ZOOM = 5;
 const FOCUS_MAX_ZOOM = 6;
-const START_CENTER: [number, number] = [20, 10];
-const NARROW_PANEL_PX = 768;
-const NARROW_EXTRA_ZOOM = 0.5;
 // Above every marker and cluster: marker z-index is the pixel y plus this offset.
 const SELECTED_Z_OFFSET = 10000;
 
@@ -39,16 +44,14 @@ interface Entry {
   marker: L.Marker;
 }
 
-/** Smallest zoom at which the whole 360 degrees of longitude fill the panel width (hundredth-step ceiling). */
+/**
+ * Smallest zoom at which the lower 48 span about 60% of the panel width (hundredth-step ceiling, so
+ * the share never drops below the target). Recomputed on every resize.
+ */
 function minZoomFor(width: number): number {
   if (!(width > 0)) return 0;
-  return Math.max(0, Math.ceil(Math.log2(width / 256) * 100) / 100);
-}
-
-/** Initial zoom: the world fits the width; a narrow (phone) panel starts one notch closer so land is readable. */
-function startZoomFor(width: number): number {
-  const min = minZoomFor(width);
-  return width > 0 && width < NARROW_PANEL_PX ? min + NARROW_EXTRA_ZOOM : min;
+  const pixelsPerDegree = (LOWER_48_MIN_SHARE * width) / LOWER_48_LNG_SPAN;
+  return Math.max(0, Math.ceil(Math.log2((pixelsPerDegree * 360) / 256) * 100) / 100);
 }
 
 function prefersReducedMotion(): boolean {
@@ -90,7 +93,7 @@ L.MarkerCluster.mergeOptions({ keyboard: false });
 export function createMapController(el: HTMLElement, opts: MapControllerOptions): MapController {
   const map = L.map(el, {
     worldCopyJump: false,
-    maxBounds: WORLD_BOUNDS,
+    maxBounds: PAN_BOUNDS,
     maxBoundsViscosity: 1,
     minZoom: minZoomFor(el.clientWidth),
     maxZoom: MAX_ZOOM,
@@ -102,7 +105,14 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   });
   map.attributionControl.setPrefix(false);
   map.attributionControl.addAttribution(ATTRIBUTION);
-  map.setView(START_CENTER, startZoomFor(el.clientWidth), { animate: false });
+  // Fits the lower 48 on load, on phones too. Deferred to the first non-zero width when the panel is hidden.
+  let fitted = false;
+  function fitLower48(animate: boolean) {
+    if (el.clientWidth <= 0) return;
+    map.fitBounds(LOWER_48, { padding: FIT_PADDING, animate });
+    fitted = true;
+  }
+  fitLower48(false);
 
   let disposed = false;
   let selectedId: string | null = null;
@@ -292,6 +302,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     opts.onZoomLimits(z <= map.getMinZoom(), z >= map.getMaxZoom());
   }
   map.on('zoomend', emitZoom);
+  emitZoom();
 
   /** Rebuilds the cluster grids from the current minimum zoom and re-adds every marker. */
   function rebuildClusters() {
@@ -316,6 +327,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
         if (disposed) return;
         map.invalidateSize();
         fitMinZoom();
+        if (!fitted) fitLower48(false);
         emitZoom();
         // A resize can leave the open popup past the edge: pan it back inside.
         if (openId !== null && popup.isOpen()) {
@@ -331,15 +343,26 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
   el.addEventListener('keydown', onKeyDown);
 
-  // Land is drawn on one canvas layer. Failure leaves the ocean base map, with markers still working.
+  // Land: the world as dim background, then the US states on top. Both are non-interactive canvas layers.
+  // A failed load leaves the ocean base map, with markers still working.
   const land = readToken('--ss-map-land');
+  const landDim = readToken('--ss-map-land-dim');
   const line = readToken('--ss-map-line');
   loadLandFeatures()
     .then((fc) => {
       if (disposed) return;
       L.geoJSON(fc, {
         interactive: false,
-        style: { fillColor: land, fillOpacity: 1, color: line, weight: 0.5, opacity: 1 },
+        style: { fillColor: landDim, fillOpacity: 1, color: line, weight: 0.5, opacity: 1 },
+      }).addTo(map);
+    })
+    .catch(() => undefined);
+  loadStateFeatures()
+    .then((fc) => {
+      if (disposed) return;
+      L.geoJSON(fc, {
+        interactive: false,
+        style: { fillColor: land, fillOpacity: 1, color: line, weight: 0.6, opacity: 1 },
       }).addTo(map);
     })
     .catch(() => undefined);
@@ -352,6 +375,9 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     },
     zoomOut() {
       if (!disposed) map.zoomOut();
+    },
+    resetView() {
+      if (!disposed) fitLower48(!prefersReducedMotion());
     },
     dispose() {
       if (disposed) return;

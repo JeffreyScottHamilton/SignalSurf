@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Station } from '@/types';
-import { dayLabel, externalHref, formatPlayedAt, stationLocation } from './format';
+import { countLabel, dayLabel, externalHref, formatPlayedAt, stationLocation } from './format';
+
+describe('countLabel', () => {
+  it('uses the singular for one and a grouped number otherwise', () => {
+    expect(countLabel(1)).toBe('1 station');
+    expect(countLabel(0)).toBe('0 stations');
+    expect(countLabel(1234)).toBe('1,234 stations');
+  });
+});
 
 // Fixed "now": Friday 13 November 2026, 15:30 local time.
 const NOW = new Date(2026, 10, 13, 15, 30).getTime();

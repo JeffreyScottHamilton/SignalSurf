@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type MouseEvent } from 'react';
 import { player } from '@/audio/player';
+import { BRAND } from '@/brand';
+import { catalogStore } from '@/catalog/catalog';
 import { CloseIcon } from '@/components/common/icons';
 import { IconButton } from '@/components/common/IconButton';
 import { ConfirmClearButton } from '@/components/views/ConfirmClearButton';
 import { useStore } from '@/lib/createStore';
+import { catalogDate } from '@/lib/format';
 import { storageAvailable } from '@/lib/safeStorage';
 import { setSettingsOpen, uiStore } from '@/state/ui';
 import { favorites, useFavorites } from '@/storage/favorites';
@@ -13,6 +16,8 @@ import { settings, useSettings } from '@/storage/settings';
 import './SettingsDialog.css';
 
 export function SettingsDialog() {
+  const generatedAt = useStore(catalogStore, (c) => c.generatedAt);
+  const catalogUpdated = catalogDate(generatedAt);
   const open = useStore(uiStore, (s) => s.settingsOpen);
   const ref = useRef<HTMLDialogElement>(null);
   // Checked once at mount: the dialog is always mounted, so this runs at app start.
@@ -126,19 +131,24 @@ export function SettingsDialog() {
 
           <li className="ss-settings__row ss-settings__row--stack">
             <details className="ss-about">
-              <summary className="ss-about__summary">About SignalSurf</summary>
+              <summary className="ss-about__summary">About {BRAND.name}</summary>
               <div className="ss-about__body">
                 <p>
-                  SignalSurf is a free explorer for internet radio stations around the world. Station data comes from
-                  the community-run Radio Browser directory; streams are played directly from each broadcaster.
+                  {BRAND.name} is a free map of US music stations you can play in the browser. Station data comes from
+                  the community-run Radio Browser directory, filtered to US music stations; streams play directly from
+                  each broadcaster. Stations without a known location are in the list only.
                 </p>
+                {catalogUpdated !== null && <p>Catalogue updated {catalogUpdated}</p>}
                 <p>
+                  Stations:{' '}
                   <a href="https://www.radio-browser.info/" target="_blank" rel="noopener noreferrer">
                     Radio Browser
                   </a>
-                </p>
-                <p>
-                  Map data:{' '}
+                  {' · Map: '}
+                  <a href="https://www.census.gov/" target="_blank" rel="noopener noreferrer">
+                    US Census Bureau
+                  </a>
+                  {', '}
                   <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">
                     Natural Earth
                   </a>

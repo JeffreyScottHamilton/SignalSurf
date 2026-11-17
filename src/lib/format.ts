@@ -21,6 +21,21 @@ export function stationLocation(s: Station): string {
   return 'United States';
 }
 
+const COUNT_FORMAT = new Intl.NumberFormat('en-US');
+
+/** "1 station", or "1,234 stations" with a thousands separator. */
+export function countLabel(n: number): string {
+  return n === 1 ? '1 station' : `${COUNT_FORMAT.format(n)} stations`;
+}
+
+/** "Mar 4, 2026" from an ISO time, or null when there is none or it is not a date. */
+export function catalogDate(iso: string | null): string | null {
+  if (iso === null) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(ms));
+}
+
 /** The station homepage as a link target: http(s) only, otherwise null. */
 export function externalHref(url: string | null | undefined): string | null {
   return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;

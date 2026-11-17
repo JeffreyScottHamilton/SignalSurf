@@ -82,6 +82,16 @@ export function normalizeFeature(f: Feature<Geometry>): Feature<Geometry> {
   return f;
 }
 
+/** Census state shapes (us-atlas, 1:10m). Alaska's antimeridian rings are unwrapped like the countries. */
+export async function loadStateFeatures(): Promise<FeatureCollection<Geometry>> {
+  const [{ default: atlas }, { feature }] = await Promise.all([
+    import('us-atlas/states-10m.json'),
+    import('topojson-client'),
+  ]);
+  const fc = feature(atlas, atlas.objects.states) as FeatureCollection<Geometry>;
+  return { ...fc, features: fc.features.map(normalizeFeature) };
+}
+
 /** Natural Earth 1:50m country shapes converted from TopoJSON. Loaded as a separate chunk. */
 export async function loadLandFeatures(): Promise<FeatureCollection<Geometry>> {
   const [{ default: atlas }, { feature }] = await Promise.all([

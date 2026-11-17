@@ -1,22 +1,32 @@
-.ss-chips {
+/* Genre chips wrap onto rows. Desktop pills are 30px tall; phones (below 768px) use 40px. */
+.ss-chip-block {
   display: flex;
   flex: 0 0 auto;
-  flex-wrap: nowrap;
-  gap: 4px;
-  height: 32px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  flex-direction: column;
+  gap: var(--ss-1);
+  min-width: 0;
 }
 
-.ss-chips::-webkit-scrollbar {
-  display: none;
+.ss-chips {
+  --ss-chip-h: 30px;
+  --ss-chip-gap: 6px;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--ss-chip-gap);
+  min-width: 0;
+}
+
+.ss-chips--collapsed {
+  max-height: calc(2 * var(--ss-chip-h) + var(--ss-chip-gap));
+  overflow: hidden;
 }
 
 .ss-chip {
   flex: 0 0 auto;
-  height: 32px;
-  padding: 0 6px;
+  height: var(--ss-chip-h);
+  box-sizing: border-box;
+  padding: 0 10px;
   border: 1px solid transparent;
   border-radius: var(--ss-r-full);
   background: var(--ss-elevated);
@@ -38,12 +48,27 @@
   border-color: var(--ss-accent);
 }
 
-@media (max-width: 767px) {
-  .ss-chip {
-    height: 40px;
-  }
+.ss-chips__more {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 0 var(--ss-1);
+  background: none;
+  border: none;
+  color: var(--ss-accent-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
 
+.ss-chip-block__count {
+  margin: 0;
+  color: var(--ss-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+@media (max-width: 767px) {
   .ss-chips {
-    height: 40px;
+    --ss-chip-h: 40px;
   }
 }

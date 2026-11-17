@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { BRAND } from '@/brand';
 
 interface Props {
   children: ReactNode;
@@ -24,7 +25,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!this.state.failed) return this.props.children;
     return (
       <div role="alert" style={{ padding: '2rem', textAlign: 'center' }}>
-        <p>Something went wrong. Reload the page.</p>
+        <p>{`${BRAND.name} hit a problem. Reload the page.`}</p>
         <button type="button" onClick={() => window.location.reload()}>
           Reload
         </button>

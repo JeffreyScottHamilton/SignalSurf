@@ -150,6 +150,17 @@ export function MinusIcon(props: IconProps) {
   );
 }
 
+/** Target: a ring with a centre dot, used for "reset map to the lower 48 states". */
+export function TargetIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="7.5" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
+    </Svg>
+  );
+}
+
 export function CloseIcon(props: IconProps) {
   return (
     <Svg {...props}>

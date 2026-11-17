@@ -72,12 +72,15 @@ export function StationList() {
       </div>
     );
   } else if (results.length === 0) {
+    const inGenre = genre === 'all' ? '' : ` in ${GENRE_LABEL[genre]}`;
+    const title = query
+      ? `No stations match “${query}”${inGenre}`
+      : genre === 'all'
+        ? 'No stations found'
+        : `No stations${inGenre}`;
     content = (
       <div className="ss-list__state">
-        <p className="ss-list__title">
-          {query ? `No stations match “${query}”` : 'No stations found'}
-        </p>
-        {genre !== 'all' && <p className="ss-list__note">Genre: {GENRE_LABEL[genre]}</p>}
+        <p className="ss-list__title">{title}</p>
         <button type="button" className="ss-list__button" onClick={resetExplore}>
           Reset search
         </button>
@@ -135,13 +138,6 @@ export function StationList() {
     <div className="ss-list">
       <div ref={scrollRef} className="ss-list__scroll" aria-busy={busy}>
         {content}
-      </div>
-      <div className="ss-sr-only" role="status" aria-live="polite">
-        {status === 'ready'
-          ? matches.length === 0
-            ? 'No stations found'
-            : `${results.length} of ${matches.length} ${matches.length === 1 ? 'station' : 'stations'} shown`
-          : ''}
       </div>
     </div>
   );

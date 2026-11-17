@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import './WorldMap.css';
-import { MinusIcon, PlusIcon } from '@/components/common/icons';
+import { MinusIcon, PlusIcon, TargetIcon } from '@/components/common/icons';
 import { useStore } from '@/lib/createStore';
 import { initExplore } from '@/state/explore';
 import { useMapStations, useMapStatus } from '@/state/mapData';
@@ -54,13 +54,13 @@ export function WorldMap() {
         : null;
 
   return (
-    <section className="ss-map" aria-label="World map">
+    <section className="ss-map" aria-label="Map">
       {/* Leaflet makes this element the single tab stop (keyboard pan and zoom); markers are not tab stops. */}
       <div
         ref={canvasRef}
         className="ss-map__canvas"
         role="region"
-        aria-label="World map of radio stations. Use the station list to browse stations by keyboard."
+        aria-label="Map of US music radio stations. Use the station list to browse stations by keyboard."
       />
       {chip && (
         <p className="ss-map__status" role="status">
@@ -68,6 +68,15 @@ export function WorldMap() {
         </p>
       )}
       <div className="ss-map__zoom">
+        <button
+          type="button"
+          className="ss-map__zoom-btn"
+          aria-label="Reset map to the lower 48 states"
+          title="Lower 48"
+          onClick={() => ctrlRef.current?.resetView()}
+        >
+          <TargetIcon size={18} />
+        </button>
         <button
           type="button"
           className="ss-map__zoom-btn"

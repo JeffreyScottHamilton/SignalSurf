@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readJSON, storageAvailable, writeJSON } from './safeStorage';
 
-const KEY = 'signalsurf:test:v1';
+const KEY = 'roadtrip:test:v1';
 
 beforeEach(() => {
   localStorage.clear();

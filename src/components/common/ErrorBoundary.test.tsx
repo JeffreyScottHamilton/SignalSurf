@@ -43,7 +43,7 @@ describe('ErrorBoundary', () => {
         </ErrorBoundary>,
       );
     });
-    expect(host.textContent).toContain('Something went wrong. Reload the page.');
+    expect(host.textContent).toContain('Roadtrip Radio hit a problem. Reload the page.');
     const button = host.querySelector('button');
     expect(button?.textContent).toBe('Reload');
   });

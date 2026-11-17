@@ -1,4 +1,5 @@
 import { GearIcon, LogoIcon } from '@/components/common/icons';
+import { BRAND } from '@/brand';
 import { IconButton } from '@/components/common/IconButton';
 import { useStore } from '@/lib/createStore';
 import { setSettingsOpen, setView, uiStore } from '@/state/ui';
@@ -15,10 +16,10 @@ export function Header() {
   const view = useStore(uiStore, (s) => s.view);
   return (
     <header className="ss-header">
-      <h1 className="ss-sr-only">SignalSurf — global radio explorer</h1>
+      <h1 className="ss-sr-only">{`${BRAND.name} — ${BRAND.tagline}`}</h1>
       <div className="ss-header__brand">
         <LogoIcon className="ss-header__logo" size={28} />
-        <span className="ss-header__wordmark">SignalSurf</span>
+        <span className="ss-header__wordmark">{BRAND.name}</span>
       </div>
       <span className="ss-header__divider" aria-hidden="true" />
       <nav aria-label="Primary" className="ss-header__nav">
