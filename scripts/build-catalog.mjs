@@ -169,6 +169,7 @@ async function main() {
   const json = JSON.stringify(doc);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, json);
+  const bytes = Buffer.byteLength(json);
   const gz = gzipSync(json).length;
 
   const kept_ = stations.length;
@@ -182,7 +183,7 @@ async function main() {
   console.log(`genre-less kept (All only): ${noGenre}`);
   console.log(`with coords: ${withCoords}; coords dropped as outside US: ${coordsDropped}`);
   console.log(`stateCode sources: iso ${sources.iso}, name ${sources.name}, polygon ${sources.polygon}, null ${sources.null}`);
-  console.log(`file ${outPath}: raw ${json.length} bytes (${(json.length / 1024).toFixed(0)} KB), gzip ${gz} bytes`);
+  console.log(`file ${outPath}: raw ${bytes} bytes (${(bytes / 1024).toFixed(0)} KiB), gzip ${gz} bytes`);
 }
 
 main().catch((err) => {
