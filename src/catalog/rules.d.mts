@@ -44,3 +44,5 @@ export type NormalizeResult =
 export declare function normalizeRaw(raw: unknown, polygonState?: ((lng: number, lat: number) => string | null) | null): NormalizeResult;
 export declare function parseTags(v: unknown): string[];
 export declare function dedupeCatalog<T extends { id: string; streamUrl: string }>(list: T[]): T[];
+export declare const CATALOG_KEYS: Record<string, string>;
+export declare function expandCatalogRecord<T>(rec: T): T;

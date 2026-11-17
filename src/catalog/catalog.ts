@@ -2,6 +2,7 @@ import { createStore, type Store } from '@/lib/createStore';
 import type { LoadStatus, Station } from '@/types';
 import { migrateLegacyStorage } from '@/storage/migrate';
 import { sanitizeStation } from './sanitize';
+import { expandCatalogRecord } from './rules.mjs';
 
 export interface CatalogState {
   status: LoadStatus;
@@ -38,7 +39,7 @@ export function parseCatalog(raw: unknown): { stations: Station[]; generatedAt: 
   const seen = new Set<string>();
   const stations: Station[] = [];
   for (const item of doc.stations) {
-    const s = sanitizeStation(withCoords(item));
+    const s = sanitizeStation(withCoords(expandCatalogRecord(item)));
     if (s === null || seen.has(s.id)) continue;
     seen.add(s.id);
     stations.push(s);

@@ -11,7 +11,7 @@ export interface Station {
   favicon: string | null;     // https only
   stateCode: string | null;   // 2-letter US state or territory code; never guessed
   city: string | null;        // city as written in the directory, when a state was found with it
-  tags: string[];             // lower case, trimmed, max 5
+  tags: string[];             // lower case, trimmed, max 3 in the catalogue
   genres: Genre[];            // may be empty for bare "music" / "variety" stations
   codec: string | null;
   bitrate: number | null;     // kbps, null when unknown

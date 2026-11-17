@@ -96,6 +96,8 @@ export function foldTag(text) {
 }
 
 const padded = (s) => ` ${foldTag(s)} `;
+/** Coordinates to 4 decimals (about 11 m); enough for a station marker and it keeps the catalogue small. */
+const round4 = (v) => Math.round(v * 1e4) / 1e4;
 const HARD_PADDED = HARD_EXCLUDES.map(padded);
 const GENERIC_SET = new Set(GENERIC_MUSIC_TAGS.map(foldTag));
 const WORD_PADDED = Object.fromEntries(
@@ -133,12 +135,18 @@ const NAME_HARD_EXCLUDES = [
 ];
 const NAME_WORD_PADDED = Object.fromEntries(GENRES.map((g) => [g, NAME_GENRES[g].map(padded)]));
 const NAME_HARD_PADDED = NAME_HARD_EXCLUDES.map(padded);
+const DECADE_PADDED = NAME_GENRES.oldies.map(padded);
+/** Christian network names. A decade word next to one of these ("K-LOVE 80s Hits") is not oldies evidence. */
+const CHRISTIAN_NETWORK_PADDED = ['christian', 'k love', 'klove', 'air1', 'air 1', 'salem', 'moody', 'family radio', 'ccm'].map(padded);
 
 /** Genres from a station name, and whether the name holds a hard-exclude word. */
 export function nameGenres(name) {
   const sp = padded(typeof name === 'string' ? name : '');
   if (NAME_HARD_PADDED.some((kw) => sp.includes(kw))) return { genres: [], hard: true };
-  const genres = GENRES.filter((g) => NAME_WORD_PADDED[g].some((kw) => sp.includes(kw)));
+  const christianNetwork = CHRISTIAN_NETWORK_PADDED.some((kw) => sp.includes(kw));
+  const genres = GENRES.filter((g) =>
+    NAME_WORD_PADDED[g].some((kw) => sp.includes(kw) && !(christianNetwork && g === 'oldies' && DECADE_PADDED.includes(kw))),
+  );
   return { genres, hard: false };
 }
 
@@ -399,12 +407,10 @@ export function normalizeRaw(raw, polygonState) {
     favicon,
     stateCode,
     city,
-    tags: tags.slice(0, 5),
+    tags: tags.slice(0, 3),
     genres: cls.genres,
-    codec: str(raw.codec),
-    bitrate: finite(raw.bitrate) !== null && raw.bitrate > 0 ? raw.bitrate : null,
     hls: raw.hls === 1 || raw.hls === '1' || raw.hls === true,
-    ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+    ...(coords ? { lat: round4(coords.lat), lng: round4(coords.lng) } : {}),
     clickCount: Math.max(0, finite(raw.clickcount) ?? 0),
   };
   return { station, reason: null, by: cls.by, stateSource: stateSource ?? 'null', coordsDropped };
@@ -445,6 +451,39 @@ export function dedupeCatalog(list) {
     ids.add(s.id);
     urls.add(s.streamUrl);
     out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Short keys used in public/catalog.json to keep the file small. The loader and the e2e checks expand them
+ * back with expandCatalogRecord; a record that already uses the long names is left as it is.
+ */
+export const CATALOG_KEYS = {
+  id: 'i',
+  name: 'n',
+  streamUrl: 'u',
+  homepage: 'h',
+  favicon: 'f',
+  stateCode: 's',
+  city: 'c',
+  tags: 't',
+  genres: 'g',
+  hls: 'x',
+  lat: 'a',
+  lng: 'o',
+  clickCount: 'k',
+};
+
+/** Maps a catalogue record's short keys back to the Station field names. Other keys pass through. */
+export function expandCatalogRecord(rec) {
+  if (typeof rec !== 'object' || rec === null) return rec;
+  const out = { ...rec };
+  for (const [long, short] of Object.entries(CATALOG_KEYS)) {
+    if (short in out && !(long in out)) {
+      out[long] = out[short];
+    }
+    if (short in out) delete out[short];
   }
   return out;
 }

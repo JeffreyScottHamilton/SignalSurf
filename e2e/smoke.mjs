@@ -22,6 +22,7 @@ register(
   )}`,
 );
 const { filterStations } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/catalog/search.ts')).href);
+const { expandCatalogRecord } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/catalog/rules.mjs')).href);
 const { hasValidCoords } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/map/markerSet.ts')).href);
 const count1 = (n) => (n === 1 ? '1 station' : `${new Intl.NumberFormat('en-US').format(n)} stations`);
 
@@ -536,7 +537,7 @@ async function main() {
     await step('l', 'count line matches the filtered total; empty state names query and genre', async () => {
       await page.setViewportSize({ width: 1440, height: 900 });
       const catalog = await (await fetch(new URL('catalog.json', baseUrl))).json();
-      const all = catalog.stations.map((s) => ({
+      const all = catalog.stations.map(expandCatalogRecord).map((s) => ({
         ...s,
         coords: typeof s.lat === 'number' && typeof s.lng === 'number' ? { lat: s.lat, lng: s.lng } : null,
         genres: s.genres ?? [],
@@ -598,7 +599,7 @@ async function main() {
         expect(got === want, `${label}: ${got} markers, expected ${want}`);
         return `${label} ${got}`;
       };
-      const all = (await (await fetch(new URL('catalog.json', baseUrl))).json()).stations.map((s) => ({
+      const all = (await (await fetch(new URL('catalog.json', baseUrl))).json()).stations.map(expandCatalogRecord).map((s) => ({
         ...s,
         coords: typeof s.lat === 'number' && typeof s.lng === 'number' ? { lat: s.lat, lng: s.lng } : null,
         genres: s.genres ?? [],

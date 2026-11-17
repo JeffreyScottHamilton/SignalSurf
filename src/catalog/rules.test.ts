@@ -4,6 +4,8 @@ import {
   classifyStation,
   dedupeCatalog,
   nameGenres,
+  CATALOG_KEYS,
+  expandCatalogRecord,
   inPolygon,
   inUsBox,
   normalizeRaw,
@@ -155,6 +157,15 @@ describe('classifyStation: name rule', () => {
     expect(classifyStation(['music'], 'Sermon Country').genres).toEqual([]);
   });
 
+  it('does not admit a decade word alongside a Christian network word', () => {
+    expect(nameGenres('K-LOVE 80s').genres).toEqual([]);
+    expect(nameGenres('Salem 90s Country').genres).toEqual(['country']);
+    expect(nameGenres('Gospel 80s Hits').genres).toEqual(['pop', 'oldies', 'christian']);
+    expect(classifyStation(['music'], 'Air1 Classic 70s').genres).toEqual([]);
+    expect(nameGenres('Classic 80s Hits').genres).toEqual(['pop', 'oldies']);
+    expect(nameGenres("Radio 90's Country").genres).toEqual(['country', 'oldies']);
+  });
+
   it('does not admit call letters or generic words', () => {
     expect(classifyStation([], 'KTST 96.5 FM').reason).toBe('untagged');
     expect(classifyStation(['gardening'], 'WXYZ Radio').reason).toBe('no-genre');
@@ -298,8 +309,6 @@ describe('normalizeRaw', () => {
       city: 'Austin',
       tags: ['jazz', 'rock'],
       genres: ['rock', 'jazz'],
-      codec: 'MP3',
-      bitrate: 128,
       hls: false,
       lat: 30.27,
       lng: -97.74,
@@ -326,10 +335,16 @@ describe('normalizeRaw', () => {
     expect(normalizeRaw(raw({ tags: 'public radio' }), polygonNone)).toEqual({ reason: 'no-genre' });
   });
 
-  it('keeps at most five tags', () => {
+  it('keeps at most three tags', () => {
     const r = normalizeRaw(raw({ tags: 'a1,a2,a3,a4,a5,rock,jazz' }), polygonNone);
     expect(r.reason).toBeNull();
-    if (r.reason === null) expect(r.station.tags).toEqual(['a1', 'a2', 'a3', 'a4', 'a5']);
+    if (r.reason === null) expect(r.station.tags).toEqual(['a1', 'a2', 'a3']);
+  });
+
+  it('rounds coordinates to 4 decimals', () => {
+    const r = normalizeRaw(raw({ geo_lat: 30.2671234, geo_long: -97.7431999 }), polygonNone);
+    expect(r.reason).toBeNull();
+    if (r.reason === null) expect(r.station.lat === 30.2671 && r.station.lng === -97.7432).toBe(true);
   });
 
   it('takes the state code from iso before the state text', () => {
@@ -415,5 +430,24 @@ describe('dedupeCatalog', () => {
       { id: 'c', streamUrl: 'https://x/3' },
     ];
     expect(dedupeCatalog(list).map((s) => s.id)).toEqual(['a', 'c']);
+  });
+});
+
+describe('expandCatalogRecord', () => {
+  it('maps short catalogue keys back to Station names and leaves long names alone', () => {
+    expect(expandCatalogRecord({ i: 'x', n: 'KTST', a: 30.2671, o: -97.7432, g: ['rock'], s: 'TX' })).toEqual({
+      id: 'x',
+      name: 'KTST',
+      lat: 30.2671,
+      lng: -97.7432,
+      genres: ['rock'],
+      stateCode: 'TX',
+    });
+    expect(expandCatalogRecord({ id: 'y', name: 'Long' })).toEqual({ id: 'y', name: 'Long' });
+  });
+
+  it('uses distinct short keys', () => {
+    const shorts = Object.values(CATALOG_KEYS);
+    expect(new Set(shorts).size).toBe(shorts.length);
   });
 });

@@ -12,22 +12,14 @@
 // with the unit tests.
 //
 // Output shape: { generatedAt: ISO string, source: 'radio-browser', count, stations: [...] }
-// Station keys are the app's Station fields. To keep the file small, a key whose value is null, false or
-// an empty list is left out; the app's sanitiser reads a missing key as that empty value.
-//   id           stationuuid
-//   name         display name
-//   streamUrl    https stream URL (url_resolved, else url)
-//   homepage     http(s) URL or null
-//   favicon      https URL or null
-//   stateCode    2-letter US state/territory code or null (never guessed)
-//   city         city text from the raw state field, or null
-//   tags         lower-case tags, max 5
-//   genres       genre ids (may be [] for bare "music" / "variety" stations)
-//   codec        string or null
-//   bitrate      kbps or null
-//   hls          boolean
-//   lat, lng     coordinates inside a US box; keys omitted when there are none
-//   clickCount   directory click count (popularity)
+// Station keys are short to keep the file small (CATALOG_KEYS in src/catalog/rules.mjs; the loader expands them):
+//   i id (stationuuid)   n name   u streamUrl (https; url_resolved, else url)   h homepage (http(s) or absent)
+//   f favicon (https or absent)   s stateCode (2-letter US state/territory, never guessed)
+//   c city (from the raw state text, or absent)   t tags (lower case, max 3)   g genres (ids; [] when none)
+//   x hls (present only when true)   a lat, o lng (inside a US box, 4 decimals; absent when none)
+//   k clickCount (directory popularity)
+// A key whose value is null, false or an empty list is left out; the app reads a missing key as that empty value.
+// codec and bitrate are not written: no screen or player reads them, and the sanitiser fills them with null.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -41,6 +33,7 @@ import {
   stateAtPoint,
   STATE_BY_FIPS,
   GENRES,
+  CATALOG_KEYS,
 } from '../src/catalog/rules.mjs';
 
 const require = createRequire(import.meta.url);
@@ -117,13 +110,16 @@ function loadStateShapes() {
   return shapes;
 }
 
-/** Drops keys whose value is the empty value (null, false, []); the app reads a missing key as that value. */
+/**
+ * Drops keys whose value is the empty value (null, false, []); the app reads a missing key as that value.
+ * Keys are written short (CATALOG_KEYS: id -> i, name -> n, ...); the loader expands them.
+ */
 function compact(station) {
   const out = {};
   for (const [key, value] of Object.entries(station)) {
     if (value === null || value === false) continue;
     if (Array.isArray(value) && value.length === 0) continue;
-    out[key] = value;
+    out[CATALOG_KEYS[key] ?? key] = value;
   }
   return out;
 }
