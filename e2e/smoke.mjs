@@ -7,12 +7,23 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { createRequire, register } from 'node:module';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
+
+// The app's catalogue search (src/catalog/search.ts) is the expected-value oracle for the list and the map.
+// Node runs its TypeScript by type stripping; this hook adds the '.ts' extension its relative imports omit.
+register(
+  `data:text/javascript,${encodeURIComponent(
+    "export async function resolve(s, c, next) { try { return await next(s, c); } catch (e) { if (e.code === 'ERR_MODULE_NOT_FOUND' && s.startsWith('.')) return next(s + '.ts', c); throw e; } }",
+  )}`,
+);
+const { filterStations } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/catalog/search.ts')).href);
+const { hasValidCoords } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/map/markerSet.ts')).href);
+const count1 = (n) => (n === 1 ? '1 station' : `${new Intl.NumberFormat('en-US').format(n)} stations`);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4173;
@@ -479,11 +490,14 @@ async function main() {
       return `${count} markers/clusters; popup "${popupName}" with Play`;
     });
 
-    // k. No horizontal overflow at phone and desktop widths.
-    await step('k', 'no horizontal overflow at 375x812 and 1440x900', async () => {
+    // k. No horizontal overflow at phone, tablet and desktop widths.
+    await step('k', 'no horizontal overflow at 375, 390, 768, 1024 and 1440 wide', async () => {
       const widths = [];
       for (const [w, h] of [
         [375, 812],
+        [390, 844],
+        [768, 1024],
+        [1024, 768],
         [1440, 900],
       ]) {
         await page.setViewportSize({ width: w, height: h });
@@ -518,6 +532,101 @@ async function main() {
       await page.waitForTimeout(300);
       return `map ${Math.round(geo.mapH)}px above sheet`;
     });
+    // l. The count line shows the filtered total; the empty state names the query and the genre.
+    await step('l', 'count line matches the filtered total; empty state names query and genre', async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const catalog = await (await fetch(new URL('catalog.json', baseUrl))).json();
+      const all = catalog.stations.map((s) => ({
+        ...s,
+        coords: typeof s.lat === 'number' && typeof s.lng === 'number' ? { lat: s.lat, lng: s.lng } : null,
+        genres: s.genres ?? [],
+        tags: s.tags ?? [],
+        city: s.city ?? null,
+        stateCode: s.stateCode ?? null,
+      }));
+      const countEl = page.locator('.ss-chip-block__count');
+      const expectCount = async (text) => {
+        await page.waitForFunction((t) => document.querySelector('.ss-chip-block__count')?.textContent === t, text, {
+          timeout: 15000,
+        });
+      };
+      await chip('All').click();
+      const total = filterStations(all, { query: '', genre: 'all' }).length;
+      expect(total === catalog.count, `catalogue count ${catalog.count} != ${total}`);
+      await expectCount(count1(total));
+      await chip('Country').click();
+      const country = filterStations(all, { query: '', genre: 'country' }).length;
+      await expectCount(count1(country));
+      await chip('All').click();
+      await expectCount(count1(total));
+      await search().fill('qzxwv9kjhgfd');
+      await page.waitForFunction(
+        () => document.querySelector('.ss-list__state .ss-list__title')?.textContent?.includes('No stations match'),
+        null,
+        { timeout: 20000 },
+      );
+      await expectCount(count1(0));
+      await chip('Country').click();
+      const title = (await page.locator('.ss-list__state .ss-list__title').textContent()).trim();
+      expect(title === 'No stations match “qzxwv9kjhgfd” in Country', `empty title "${title}"`);
+      await page.locator('.ss-list__button', { hasText: 'Reset search' }).click();
+      await chip('All').click();
+      await waitForRows(1);
+      await expectCount(count1(total));
+      expect((await countEl.textContent()) === count1(total), 'count not restored');
+      return `All ${count1(total)}, Country ${count1(country)}`;
+    });
+
+    // m. Map: Lower 48 reset returns the framing, and markers equal the filtered stations with coordinates.
+    await step('m', 'markers match filtered stations with coordinates; Lower 48 resets the framing', async () => {
+      const markers = () =>
+        page.evaluate(() => {
+          let n = 0;
+          for (const c of document.querySelectorAll('.ss-map .ss-cluster-icon .ss-cluster span')) n += Number(c.textContent);
+          n += document.querySelectorAll(
+            '.ss-map .leaflet-marker-pane .leaflet-marker-icon:not(.ss-cluster-icon):not(:has(.ss-marker--selected))',
+          ).length;
+          return n;
+        });
+      const settle = () => page.waitForTimeout(900);
+      const checkFilter = async (label, query, genre, doSet) => {
+        await doSet();
+        await settle();
+        // The map keeps every filtered station with a valid coordinate, including Alaska and Hawaii outside the framing.
+        const want = filterStations(all, { query, genre }).filter((s) => hasValidCoords(s.coords)).length;
+        const got = await markers();
+        expect(got === want, `${label}: ${got} markers, expected ${want}`);
+        return `${label} ${got}`;
+      };
+      const all = (await (await fetch(new URL('catalog.json', baseUrl))).json()).stations.map((s) => ({
+        ...s,
+        coords: typeof s.lat === 'number' && typeof s.lng === 'number' ? { lat: s.lat, lng: s.lng } : null,
+        genres: s.genres ?? [],
+        tags: s.tags ?? [],
+        city: s.city ?? null,
+        stateCode: s.stateCode ?? null,
+      }));
+      const reset = page.locator('button[aria-label="Reset map to the lower 48 states"]');
+      await reset.click();
+      await settle();
+      const parts = [];
+      parts.push(await checkFilter('All', '', 'all', () => chip('All').click()));
+      parts.push(await checkFilter('Country', '', 'country', () => chip('Country').click()));
+      parts.push(await checkFilter('texas', 'texas', 'all', async () => {
+        await chip('All').click();
+        await search().fill('texas');
+      }));
+      await search().fill('');
+      await page.waitForTimeout(400);
+      // Zoom in, then reset: the lower 48 fit comes back.
+      for (let i = 0; i < 3; i++) await page.locator('button[aria-label="Zoom in"]').click();
+      await settle();
+      await reset.click();
+      await settle();
+      parts.push(await checkFilter('All after reset', '', 'all', () => chip('All').click()));
+      return parts.join(', ');
+    });
+
   } catch (err) {
     exitCode = 1;
     console.error(`e2e failed: ${err.message}`);
