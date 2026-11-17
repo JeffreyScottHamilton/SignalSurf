@@ -24,6 +24,23 @@ register(
 const { filterStations } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/catalog/search.ts')).href);
 const { expandCatalogRecord } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/catalog/rules.mjs')).href);
 const { hasValidCoords } = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/map/markerSet.ts')).href);
+// Map geometry for the top-zoom check: the lower 48 fit and the screen position of a place at a zoom (Web Mercator).
+const merc = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+const LOW48 = { s: 24.5, w: -125, n: 49.5, e: -66.5 };
+const LOW48_CENTRE = (() => {
+  const yc = (merc(LOW48.s) + merc(LOW48.n)) / 2;
+  return { lat: (2 * Math.atan(Math.exp(yc)) - Math.PI / 2) * 180 / Math.PI, lng: (LOW48.w + LOW48.e) / 2 };
+})();
+function fitZoomFor(w, h) {
+  const scale = Math.min((w - 24) / (((LOW48.e - LOW48.w) / 360) * 256), (h - 24) / ((((merc(LOW48.n) - merc(LOW48.s)) / (2 * Math.PI)) * 256)));
+  return Math.floor(Math.log2(scale) * 10) / 10;
+}
+function screenOf(lat, lng, w, h, z) {
+  return {
+    x: w / 2 + (lng - LOW48_CENTRE.lng) * ((256 * 2 ** z) / 360),
+    y: h / 2 - (merc(lat) - merc(LOW48_CENTRE.lat)) * ((256 * 2 ** z) / (2 * Math.PI)),
+  };
+}
 const count1 = (n) => (n === 1 ? '1 station' : `${new Intl.NumberFormat('en-US').format(n)} stations`);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -626,6 +643,119 @@ async function main() {
       await settle();
       parts.push(await checkFilter('All after reset', '', 'all', () => chip('All').click()));
       return parts.join(', ');
+    });
+
+    // n. Zoomed to the top (+ button, then wheel) over the map, the land is the US fill with visible state borders and
+    // no very light pixels. Markers are hidden with a query that matches nothing, so only the map is measured.
+    await step('n', 'zoomed to max via + and wheel: US fill and state lines present, 0% very light pixels', async () => {
+      const token = (name) =>
+        page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+      const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+      const usFill = hexRgb(await token('--ss-map-land'));
+      const stateLine = hexRgb(await token('--ss-map-state-line'));
+      const canvas = page.locator('.ss-map__canvas');
+      const plus = page.locator('button[aria-label="Zoom in"]');
+      const helper = await page.context().newPage();
+      const measure = async () => {
+        const box = await canvas.boundingBox();
+        const rects = await page.evaluate(() => {
+          const c = document.querySelector('.ss-map__canvas').getBoundingClientRect();
+          const out = [];
+          for (const sel of ['.ss-map__zoom', '.leaflet-control-attribution', '.ss-map__status', '.leaflet-popup']) {
+            for (const el of document.querySelectorAll(sel)) {
+              const r = el.getBoundingClientRect();
+              out.push({ x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height });
+            }
+          }
+          return out;
+        });
+        const png = await canvas.screenshot({ type: 'png' });
+        return helper.evaluate(
+          async ({ b64, rects, w, h, usFill, stateLine }) => {
+            const img = new Image();
+            img.src = `data:image/png;base64,${b64}`;
+            await img.decode();
+            const c = document.createElement('canvas');
+            c.width = img.width;
+            c.height = img.height;
+            const cx = c.getContext('2d');
+            cx.drawImage(img, 0, 0);
+            const d = cx.getImageData(0, 0, img.width, img.height).data;
+            const k = img.width / w;
+            const near = (r, g, b, t, tol) => Math.abs(r - t[0]) <= tol && Math.abs(g - t[1]) <= tol && Math.abs(b - t[2]) <= tol;
+            let total = 0, light = 0, us = 0, state = 0;
+            for (let y = 0; y < img.height; y++) {
+              for (let x = 0; x < img.width; x++) {
+                const px = x / k, py = y / k;
+                if (rects.some((r) => px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h)) continue;
+                const i = (y * img.width + x) * 4;
+                const r = d[i], g = d[i + 1], b = d[i + 2];
+                total++;
+                if ((r + g + b) / 3 >= 120) light++;
+                else if (near(r, g, b, usFill, 4)) us++;
+                else if (near(r, g, b, stateLine, 12)) state++;
+              }
+            }
+            return { total, light, us, state };
+          },
+          { b64: png.toString('base64'), rects, w: box.width, h: box.height, usFill, stateLine },
+        );
+      };
+      try {
+        await search().fill('qzxwv9kjhgfd');
+        await page.waitForTimeout(700);
+        // St. Louis sits on the Illinois and Missouri border, so the top zoom has state lines in view.
+        const box0 = await canvas.boundingBox();
+        const ST_LOUIS = [38.63, -90.2];
+        const centreOn = async (lat, lng) => {
+          await page.locator('button[aria-label="Reset map to the lower 48 states"]').click();
+          await page.waitForTimeout(900);
+          const b = await canvas.boundingBox();
+          const p = screenOf(lat, lng, b.width, b.height, fitZoomFor(b.width, b.height));
+          const from = { x: b.x + p.x, y: b.y + p.y };
+          const to = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+          await page.mouse.move(from.x, from.y);
+          await page.mouse.down();
+          for (let i = 1; i <= 20; i++) {
+            await page.mouse.move(from.x + ((to.x - from.x) * i) / 20, from.y + ((to.y - from.y) * i) / 20);
+          }
+          await page.mouse.up();
+          await page.waitForTimeout(800);
+        };
+        expect(box0.width > 0, 'map has no size');
+        // Button zoom to the top, centred on St. Louis.
+        await centreOn(...ST_LOUIS);
+        for (let i = 0; i < 30 && !(await plus.isDisabled()); i++) {
+          await plus.click({ timeout: 1500 }).catch(() => {});
+          await page.waitForTimeout(250);
+        }
+        await page.waitForTimeout(500);
+        const byButton = await measure();
+        expect(await plus.isDisabled(), 'the + button did not reach the maximum zoom');
+        // Wheel over the middle of the map to the top, centred on St. Louis.
+        await centreOn(...ST_LOUIS);
+        const b2 = await canvas.boundingBox();
+        await page.mouse.move(b2.x + b2.width / 2, b2.y + b2.height / 2);
+        for (let i = 0; i < 40 && !(await plus.isDisabled()); i++) {
+          await page.mouse.wheel(0, -120);
+          await page.waitForTimeout(200);
+        }
+        await page.waitForTimeout(600);
+        const byWheel = await measure();
+        expect(await plus.isDisabled(), 'wheel did not reach the maximum zoom');
+        for (const [label, m] of [['button', byButton], ['wheel', byWheel]]) {
+          const lightPct = (100 * m.light) / m.total;
+          expect(m.light === 0, `${label}: ${m.light} very light pixels (${lightPct.toFixed(2)}%)`);
+          expect(m.us / m.total > 0.5, `${label}: US fill only ${((100 * m.us) / m.total).toFixed(1)}%`);
+          expect(m.state / m.total >= 0.0005, `${label}: state-line colour in ${m.state} pixels, no borders`);
+        }
+        return `button: ${byButton.light} light px, US ${((100 * byButton.us) / byButton.total).toFixed(1)}%, borders ${byButton.state} px; wheel: ${byWheel.light} light px, borders ${byWheel.state} px`;
+      } finally {
+        await helper.close();
+        await search().fill('');
+        await page.waitForTimeout(700);
+        await waitForRows(1);
+      }
     });
 
   } catch (err) {

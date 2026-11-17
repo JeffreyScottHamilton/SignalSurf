@@ -128,7 +128,7 @@
   place-items: center;
   background: var(--ss-elevated);
   color: var(--ss-text);
-  border: 1px solid var(--ss-border);
+  border: 1px solid var(--ss-map-badge-line);
   border-radius: 50%;
   font-size: 10px;
   font-weight: 600;

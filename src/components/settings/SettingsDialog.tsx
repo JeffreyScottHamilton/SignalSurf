@@ -148,10 +148,6 @@ export function SettingsDialog() {
                   <a href="https://www.census.gov/" target="_blank" rel="noopener noreferrer">
                     US Census Bureau
                   </a>
-                  {', '}
-                  <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">
-                    Natural Earth
-                  </a>
                 </p>
                 <p>
                   <a href="THIRD-PARTY-NOTICES.txt" target="_blank" rel="noopener noreferrer">

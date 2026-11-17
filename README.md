@@ -54,10 +54,10 @@ Run `npm run build` and serve the static `dist/` folder from any static host.
 ## Data source and licences
 
 - **Stations:** the [Radio Browser](https://www.radio-browser.info/) community directory. Its site states that the data is in the public domain. The catalogue keeps only stations that have an HTTPS stream, a tag that maps to a music genre, and no non-music tag. Details: [docs/data-source.md](docs/data-source.md).
-- **Map shapes:** US state outlines from the US Census Bureau through the `us-atlas` package (ISC licence in the package). The rest of the world is from Natural Earth through the `world-atlas` package (ISC packaging; the Natural Earth terms are not verified here).
+- **Map shapes:** US state outlines from the US Census Bureau through the `us-atlas` package (ISC licence in the package). The map shows only the US; no other land is drawn.
 - **Libraries:** Leaflet, markercluster, React, hls.js, Inter and others. Their licences and the notices are in [docs/licenses.md](docs/licenses.md) and [public/THIRD-PARTY-NOTICES.txt](public/THIRD-PARTY-NOTICES.txt), which ships with the app.
 
-The map and the About panel credit Radio Browser, the US Census Bureau and Natural Earth.
+The map and the About panel credit Radio Browser and the US Census Bureau.
 
 ## Known limitations
 
@@ -73,7 +73,7 @@ The map and the About panel credit Radio Browser, the US Census Bureau and Natur
 
 - `src/catalog`: the catalogue loader, the search and filter (`search.ts`), the music and state rules shared with the build script (`rules.mjs`), and the genre labels.
 - `src/state`: the explore state (query, genre, list paging) and the map's station list, both derived from the catalogue.
-- `src/map`: the Leaflet map, the US state and world land layers, and marker helpers.
+- `src/map`: the Leaflet map, the US state layer, and marker helpers.
 - `src/audio`: the playback controller, which owns the single audio element.
 - `src/storage`: favourites, history, settings and the one-time migration from the old keys.
 - `src/components`: the React UI, in `common`, `layout`, `sidebar`, `player`, `views` and `settings`.

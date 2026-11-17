@@ -87,6 +87,5 @@ The target was 900 KiB. The trim (short keys, coordinates to four decimals, thre
 
 - Rate limits of the directory under load. No rate-limit headers were seen on 2026-11-13.
 - Whether a real play increments `clickcount` through `/json/url/{stationuuid}`. The player calls it once per station when the stream reaches Playing (`reportClick` in `src/api/radioBrowser.ts`; errors are ignored). The catalogue's click counts come from the build query and are not updated by the app.
-- Natural Earth's own terms (`naturalearthdata.com` answered 403 through the sandbox proxy).
 - The US Census Bureau data's licence terms as shipped in `us-atlas`; see `docs/licenses.md`.
 - Hosts `fi1` and `at1` (not reachable from the sandbox on 2026-11-13).

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { LOWER_48_LNG_SPAN, LOWER_48_MIN_SHARE, minZoomFor, panBoxFor } from './zoom';
+import { minZoomFor, panBoxFor, stateWeightFor, US_CENTRE_LNG, US_EAST, US_WEST } from './zoom';
 
 // Degrees of longitude per pixel at zoom z on a 256px world: 2^z * 256 / 360 pixels per degree.
-const lower48Share = (zoom: number, width: number) => (LOWER_48_LNG_SPAN * ((2 ** zoom) * 256) / 360) / width;
+const pxPerDegree = (zoom: number) => (2 ** zoom * 256) / 360;
 
 describe('minZoomFor', () => {
   const widths = [240, 320, 375, 390, 768, 1024, 1088, 1280, 1440, 1920];
@@ -11,15 +11,40 @@ describe('minZoomFor', () => {
     for (const w of widths) expect(Number.isInteger(minZoomFor(w)), `width ${w}`).toBe(true);
   });
 
-  it('keeps the lower 48 at least the target share of the panel width', () => {
+  it('shows the whole US, Alaska and Hawaii included, at the minimum zoom', () => {
     for (const w of widths) {
-      expect(lower48Share(minZoomFor(w), w), `width ${w}`).toBeGreaterThanOrEqual(LOWER_48_MIN_SHARE);
+      expect((US_EAST - US_WEST) * pxPerDegree(minZoomFor(w)), `width ${w}`).toBeLessThanOrEqual(w);
     }
+  });
+
+  it('is the smallest zoom that is not too far out: one more step would not fit the whole US', () => {
+    for (const w of widths) {
+      const z = minZoomFor(w);
+      if (z > 0) expect((US_EAST - US_WEST) * pxPerDegree(z), `width ${w}`).toBeLessThanOrEqual(w);
+      expect((US_EAST - US_WEST) * pxPerDegree(z + 1), `width ${w} one zoom in`).toBeGreaterThan(w);
+    }
+  });
+
+  it('centres the whole US on the US centre longitude', () => {
+    expect(US_CENTRE_LNG).toBe((US_WEST + US_EAST) / 2);
   });
 
   it('is zero for an unmeasured panel', () => {
     expect(minZoomFor(0)).toBe(0);
     expect(minZoomFor(Number.NaN)).toBe(0);
+  });
+});
+
+describe('stateWeightFor', () => {
+  it('keeps the borders thin at the start view', () => {
+    expect(stateWeightFor(4.6)).toBeLessThanOrEqual(0.7);
+  });
+
+  it('is at least about 1px from zoom 6 on, and never more than 1.5px', () => {
+    for (let z = 6; z <= 9; z += 0.1) {
+      expect(stateWeightFor(z), `zoom ${z}`).toBeGreaterThanOrEqual(1);
+      expect(stateWeightFor(z), `zoom ${z}`).toBeLessThanOrEqual(1.5);
+    }
   });
 });
 
@@ -41,8 +66,9 @@ describe('panBoxFor', () => {
     for (const [w, h] of [[357, 553], [357, 812], [372, 585], [357, 171]] as const) {
       for (const zoom of [minZoomFor(w), minZoomFor(w) + 0.5, minZoomFor(w) + 2]) {
         const box = panBoxFor(w, h, minZoomFor(w), centre, base);
-        expect(box.north, `north ${w}x${h} z${zoom}`).toBeGreaterThanOrEqual(latAt(zoom, -h / 2));
-        expect(box.south, `south ${w}x${h} z${zoom}`).toBeLessThanOrEqual(latAt(zoom, h / 2));
+        // Mercator stops at 85.0511: a view taller than the whole world is contained up to that limit.
+        expect(box.north, `north ${w}x${h} z${zoom}`).toBeGreaterThanOrEqual(Math.min(85.0511, latAt(zoom, -h / 2)));
+        expect(box.south, `south ${w}x${h} z${zoom}`).toBeLessThanOrEqual(Math.max(-85.0511, latAt(zoom, h / 2)));
       }
     }
   });

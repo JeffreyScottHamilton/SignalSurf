@@ -35,7 +35,7 @@ function closeAroundPole(ring: Ring): Ring {
 /**
  * Unwraps one polygon (outer ring first, then holes). Holes are moved by whole turns to sit
  * next to the outer ring. Then copies shifted by -360 or +360 are added wherever the polygon
- * reaches past the antimeridian, so both map edges are filled. Copies that do not overlap
+ * reaches past the antimeridian (the Aleutians), so both map edges are filled. Copies that do not overlap
  * -180..180 are dropped.
  */
 export function normalizePolygon(rings: Polygon): Polygon[] {
@@ -68,7 +68,7 @@ export function normalizePolygon(rings: Polygon): Polygon[] {
   return copies.length > 0 ? copies : [all];
 }
 
-/** Country feature with unwrapped, edge-complete polygons. Non-polygon geometry passes through. */
+/** State feature with unwrapped, edge-complete polygons. Non-polygon geometry passes through. */
 export function normalizeFeature(f: Feature<Geometry>): Feature<Geometry> {
   const g = f.geometry;
   if (g.type === 'Polygon') {
@@ -82,23 +82,12 @@ export function normalizeFeature(f: Feature<Geometry>): Feature<Geometry> {
   return f;
 }
 
-/** Census state shapes (us-atlas, 1:10m). Alaska's antimeridian rings are unwrapped like the countries. */
+/** Census state shapes (us-atlas, 1:10m). Alaska's antimeridian rings are unwrapped and copied to both map edges. */
 export async function loadStateFeatures(): Promise<FeatureCollection<Geometry>> {
   const [{ default: atlas }, { feature }] = await Promise.all([
     import('us-atlas/states-10m.json'),
     import('topojson-client'),
   ]);
   const fc = feature(atlas, atlas.objects.states) as FeatureCollection<Geometry>;
-  return { ...fc, features: fc.features.map(normalizeFeature) };
-}
-
-/** Natural Earth 1:50m country shapes converted from TopoJSON. Loaded as a separate chunk. */
-export async function loadLandFeatures(): Promise<FeatureCollection<Geometry>> {
-  const [{ default: atlas }, { feature }] = await Promise.all([
-    import('world-atlas/countries-50m.json'),
-    import('topojson-client'),
-  ]);
-  // A GeometryCollection converts to a FeatureCollection.
-  const fc = feature(atlas, atlas.objects.countries) as FeatureCollection<Geometry>;
   return { ...fc, features: fc.features.map(normalizeFeature) };
 }

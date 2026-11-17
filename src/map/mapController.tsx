@@ -4,11 +4,11 @@ import 'leaflet.markercluster';
 import { createRoot, type Root } from 'react-dom/client';
 import { selectStation } from '@/state/ui';
 import type { Station } from '@/types';
-import { loadLandFeatures, loadStateFeatures } from './landData';
+import { loadStateFeatures } from './landData';
 import { SELECTED_ICON, STATION_ICON } from './markerIcons';
 import { MapPopupCard } from './MapPopup';
 import { hasValidCoords } from './markerSet';
-import { minZoomFor, panBoxFor } from './zoom';
+import { minZoomFor, panBoxFor, stateWeightFor, US_CENTRE_LNG } from './zoom';
 
 export interface MapControllerOptions {
   onZoomLimits: (atMin: boolean, atMax: boolean) => void;
@@ -27,11 +27,11 @@ export interface MapController {
 
 // Phones get the short form (CSS picks one under 768px); both are one line.
 const ATTRIBUTION =
-  '<span class="ss-attr--long">Stations: Radio Browser · Map: US Census Bureau, Natural Earth</span>' +
-  '<span class="ss-attr--short">Radio Browser · Census · Natural Earth</span>';
-// Bounds the pan: the lower 48, Alaska, Hawaii and Puerto Rico are reachable, the rest of the world is not.
-// Widened by panBounds() when a panel's view is larger than this box.
-const PAN_BASE = { south: 5, west: -180, north: 75, east: -50 };
+  '<span class="ss-attr--long">Stations: Radio Browser · Map: US Census Bureau</span>' +
+  '<span class="ss-attr--short">Radio Browser · US Census Bureau</span>';
+// Bounds the pan to the US: the lower 48, Alaska (the Aleutians reach -188), Hawaii and Puerto Rico, with a margin.
+// Widened by panBounds() when a panel's view is larger than this box, so the whole US can be shown at the minimum zoom.
+const PAN_BASE = { south: 14, west: -190, north: 74, east: -60 };
 const LOWER_48 = L.latLngBounds([24.5, -125], [49.5, -66.5]);
 // fitBounds centres the view on the bounds' midpoint in Mercator, which is not the latitude midpoint.
 const LOWER_48_CENTRE = (() => {
@@ -94,7 +94,9 @@ L.MarkerCluster.mergeOptions({ keyboard: false });
  * Without this a tall panel's view is taller than the fixed box, and Leaflet centres the box rather than the lower 48.
  */
 function panBounds(el: HTMLElement, zoom: number): L.LatLngBounds {
-  const b = panBoxFor(el.clientWidth, el.clientHeight, zoom, LOWER_48_CENTRE, PAN_BASE);
+  // Latitude from the lower 48 centre, longitude from the whole US: the minimum zoom then shows all of it, centred.
+  const centre = { lat: LOWER_48_CENTRE.lat, lng: US_CENTRE_LNG };
+  const b = panBoxFor(el.clientWidth, el.clientHeight, zoom, centre, PAN_BASE);
   return L.latLngBounds([b.south, b.west], [b.north, b.east]);
 }
 
@@ -309,6 +311,9 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     opts.onZoomLimits(z <= map.getMinZoom(), z >= map.getMaxZoom());
   }
   map.on('zoomend', emitZoom);
+  // The state borders keep their on-screen width as the map zooms (see stateWeightFor).
+  let statesLayer: L.GeoJSON | null = null;
+  map.on('zoomend', () => statesLayer?.setStyle({ weight: stateWeightFor(map.getZoom()) }));
   emitZoom();
 
   /** Rebuilds the cluster grids from the current minimum zoom and re-adds every marker. */
@@ -352,31 +357,19 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
   el.addEventListener('keydown', onKeyDown);
 
-  // Land: the world as dim background, then the US states on top. Both are non-interactive canvas layers.
-  // A failed load leaves the ocean base map, with markers still working.
+  // Land: the US states, drawn as one non-interactive canvas layer over the ocean. A failed load leaves the
+  // ocean base map, with markers still working.
   const land = readToken('--ss-map-land');
-  const landDim = readToken('--ss-map-land-dim');
-  const line = readToken('--ss-map-line');
   const stateLine = readToken('--ss-map-state-line');
-  // Both layers load in parallel but are added in order: the world first, the states on top. Adding them as each
-  // load resolves let the dim world cover the US whenever it finished last.
-  const worldReady = loadLandFeatures().catch(() => null);
-  const statesReady = loadStateFeatures().catch(() => null);
-  void Promise.all([worldReady, statesReady]).then(([world, states]) => {
-    if (disposed) return;
-    if (world) {
-      L.geoJSON(world, {
+  void loadStateFeatures()
+    .then((states) => {
+      if (disposed) return;
+      statesLayer = L.geoJSON(states, {
         interactive: false,
-        style: { fillColor: landDim, fillOpacity: 1, color: line, weight: 0.5, opacity: 1 },
+        style: { fillColor: land, fillOpacity: 1, color: stateLine, weight: stateWeightFor(map.getZoom()), opacity: 1 },
       }).addTo(map);
-    }
-    if (states) {
-      L.geoJSON(states, {
-        interactive: false,
-        style: { fillColor: land, fillOpacity: 1, color: stateLine, weight: 0.75, opacity: 1 },
-      }).addTo(map);
-    }
-  });
+    })
+    .catch(() => null);
 
   return {
     setStations,

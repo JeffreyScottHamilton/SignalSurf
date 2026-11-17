@@ -5,8 +5,7 @@ Checked 2026-11-17 against `node_modules/<pkg>/package.json` (`license` field) a
 | Package | Version | Licence | What we use it for | Attribution shown where |
 |---|---|---|---|---|
 | Radio Browser (station data, not an npm package) | n/a | Public domain (see below) | Station names, streams, tags, coordinates, favicons, in the prebuilt catalogue | Map attribution "Stations: Radio Browser" (`src/map/mapController.tsx`); About panel (`src/components/settings/SettingsDialog.tsx`) |
-| us-atlas | 3.0.1 | ISC (`LICENSE`: "Copyright 2013-2019 Michael Bostock") | US state outlines, `states-10m.json`: map layer (`src/map/landData.ts`, own chunk, dynamic import) and state polygons in the catalogue build (`scripts/build-catalog.mjs`) | Map attribution "Map: US Census Bureau, Natural Earth"; About panel "US Census Bureau" |
-| world-atlas | 2.0.2 | ISC (`LICENSE`: "Copyright 2013-2019 Michael Bostock") | Land outside the US, `countries-50m.json`, drawn dimmed (`src/map/landData.ts`, own chunk) | Map attribution "Natural Earth"; About panel "Natural Earth" |
+| us-atlas | 3.0.1 | ISC (`LICENSE`: "Copyright 2013-2019 Michael Bostock") | US state outlines, `states-10m.json`: map layer (`src/map/landData.ts`, own chunk, dynamic import) and state polygons in the catalogue build (`scripts/build-catalog.mjs`) | Map attribution "Map: US Census Bureau"; About panel "US Census Bureau" |
 | leaflet | 1.9.4 | BSD-2-Clause (`LICENSE`: "Copyright (c) 2010-2023, Volodymyr Agafonkin") | Map rendering, markers, popups (`src/map/mapController.tsx`) | None in the UI. The Leaflet attribution prefix is turned off (`setPrefix(false)`). |
 | leaflet.markercluster | 1.5.3 | MIT (`MIT-LICENCE.txt`) | Clustering of station markers | None in the UI |
 | topojson-client | 3.1.0 | ISC (`LICENSE`: "Copyright 2012-2019 Michael Bostock") | Converts the TopoJSON files to GeoJSON (`src/map/landData.ts`, and the build script) | None in the UI |
@@ -30,14 +29,8 @@ Checked 2026-11-17 against `node_modules/<pkg>/package.json` (`license` field) a
 - `node_modules/us-atlas/LICENSE` (ISC): "Copyright 2013-2019 Michael Bostock. Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies."
 - The package states no licence for the Census Bureau data. The ISC licence covers the packaging and conversion. **The Census Bureau's own terms for these shapefiles are not verified** (not checked on the Census site from this sandbox).
 
-### Natural Earth (world-atlas)
-
-- `node_modules/world-atlas/README.md`: "This repository provides a convenient redistribution of [Natural Earth](http://www.naturalearthdata.com/)’s [vector data](http://www.naturalearthdata.com/downloads/), version 4.1.0 as TopoJSON."
-- The README does not state a licence for the Natural Earth data. Its `package.json` says ISC for the packaging.
-- Natural Earth's own terms: **not verified**. `https://www.naturalearthdata.com/about/terms-of-use/` returned HTTP 403 through the sandbox proxy. The "public domain" wording is the app's own statement and has not been checked against Natural Earth.
-
 ## Notices and open items
 
 - The notices for every bundled package are in `public/THIRD-PARTY-NOTICES.txt`, which ships with the app (`dist/THIRD-PARTY-NOTICES.txt`).
 - Station logos and streams are loaded from third-party hosts. The app does not host or license them.
-- Open: the us-atlas and Natural Earth terms above are not verified against the publishers. Re-check before a public release.
+- Open: the us-atlas terms above are not verified against the publisher. Re-check before a public release.

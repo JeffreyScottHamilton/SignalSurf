@@ -1,10 +1,12 @@
-/** Lower 48 longitude span in degrees (-125 to -66.5). */
-export const LOWER_48_LNG_SPAN = 58.5;
-/** The lower 48 never get narrower than this share of the panel width. */
-export const LOWER_48_MIN_SHARE = 0.6;
+/** Western-most point of the allowed area in degrees: the Aleutians cross 180 and are unwrapped to about -188. */
+export const US_WEST = -188;
+/** Eastern-most point of the US shapes (Maine, Puerto Rico) plus a margin. */
+export const US_EAST = -64;
+/** Longitude of the middle of the whole US, Alaska and Hawaii included. */
+export const US_CENTRE_LNG = (US_WEST + US_EAST) / 2;
 
 /**
- * Smallest WHOLE zoom at which the lower 48 span at least LOWER_48_MIN_SHARE of the panel width. Recomputed on every resize.
+ * Smallest WHOLE zoom at which the whole US (Alaska and Hawaii included) fits the panel width. Recomputed on every resize.
  *
  * The minimum must be an integer. markercluster builds its top grid level at floor(minZoom) - 1 but walks
  * the tree from minZoom - 1; with a fractional minZoom (say 3.97) that walk starts above the top level and
@@ -12,8 +14,14 @@ export const LOWER_48_MIN_SHARE = 0.6;
  */
 export function minZoomFor(width: number): number {
   if (!(width > 0)) return 0;
-  const pixelsPerDegree = (LOWER_48_MIN_SHARE * width) / LOWER_48_LNG_SPAN;
-  return Math.max(0, Math.ceil(Math.log2((pixelsPerDegree * 360) / 256)));
+  // The largest 2^zoom that keeps the whole US span within the width: 256 * 2^zoom / 360 pixels per degree.
+  const scale = (width * 360) / (256 * (US_EAST - US_WEST));
+  return Math.max(0, Math.floor(Math.log2(scale)));
+}
+
+/** State border width in CSS pixels: hairline at the start view, at least about 1px from zoom 6 on. */
+export function stateWeightFor(zoom: number): number {
+  return Math.min(1.5, Math.max(0.6, 0.6 + (zoom - 4.5) * 0.4));
 }
 
 export interface PanBox {

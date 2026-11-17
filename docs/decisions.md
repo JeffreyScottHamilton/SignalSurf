@@ -54,12 +54,13 @@ Favourites and history are stored in `localStorage` under `roadtrip:favorites:v1
 
 The earlier app wrote `signalsurf:favorites:v1`, `signalsurf:history:v1` and `signalsurf:settings:v1`. On start, `migrateLegacyStorage` (`src/storage/migrate.ts`) does this for each store: when the new key is absent and the old key exists, it reads the old value through the sanitiser, adapts old snapshots (the old `region` and `country` fields become `city: null, stateCode: null`, or the catalogue record when the station id is in the catalogue), writes the new key, and removes the old one. Stations that are not in the catalogue, or not in the US, are kept and stay playable. Reason: favourites a user already saved should survive the change of app. The old key names remain only in this migration and its tests.
 
-## Map: US states from us-atlas, world land dimmed, whole-number zoom
+## Map: US states only, whole-number zoom
 
-- The US state outlines come from `us-atlas/states-10m.json` (`src/map/landData.ts`). They are a separate chunk, loaded with a dynamic import, drawn as the lighter land with thin borders.
-- The rest of the world is `world-atlas/countries-50m.json`, drawn darker and muted (`--ss-map-land-dim`), so Canada and Mexico stay in view but do not compete with the US.
-- The map opens fitted to the lower 48 (`LOWER_48` in `mapController.tsx`). Pan bounds are `[5,-180]` to `[75,-50]`, so Alaska, Hawaii and Puerto Rico are reachable. Attribution: "Stations: Radio Browser · Map: US Census Bureau, Natural Earth".
-- The minimum zoom is a whole number (`minZoomFor` in `src/map/zoom.ts`), rounded up so the lower 48 span at least 60% of the panel. Reason: markercluster walks its grid from `minZoom - 1` but builds its top level at `floor(minZoom) - 1`. With a fractional minimum, stations that never cluster were dropped from the map; the grids are also rebuilt whenever the whole minimum changes.
+- The map draws only the US: the state outlines from `us-atlas/states-10m.json` (`src/map/landData.ts`), a separate chunk loaded with a dynamic import. Everything outside them is the ocean colour. The world-atlas land layer was removed.
+- The map opens fitted to the lower 48 (`LOWER_48` in `mapController.tsx`). Pan bounds are `[14,-190]` to `[74,-60]` (`PAN_BASE`), so Alaska (the Aleutians reach -188), Hawaii and Puerto Rico are reachable and nothing else. The minimum zoom shows the whole US, centred.
+- The state borders get wider as the map zooms (`stateWeightFor` in `src/map/zoom.ts`): a hairline at the start view, at least about 1px from zoom 6.
+- Attribution: "Stations: Radio Browser · Map: US Census Bureau".
+- The minimum zoom is a whole number (`minZoomFor` in `src/map/zoom.ts`), rounded down so the whole US (from -188 to -64) fits the panel width. Reason: markercluster walks its grid from `minZoom - 1` but builds its top level at `floor(minZoom) - 1`. With a fractional minimum, stations that never cluster were dropped from the map; the grids are also rebuilt whenever the whole minimum changes.
 
 ## Search and the list are local
 
