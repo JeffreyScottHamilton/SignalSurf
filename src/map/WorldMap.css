@@ -39,6 +39,11 @@
   font-size: 12px;
   line-height: 16px;
   padding: 0 var(--ss-2);
+  white-space: nowrap;
+}
+
+.ss-map .ss-attr--short {
+  display: none;
 }
 
 /* Loading and error chip, top-left. */
@@ -219,6 +224,19 @@
   .ss-map__zoom-btn {
     width: 44px;
     height: 44px;
+  }
+
+  /* Phones: the short credit on one 11px line. The zoom column sits 32px up, clear of it. */
+  .ss-map .leaflet-control-attribution {
+    font-size: 11px;
+  }
+
+  .ss-map .ss-attr--long {
+    display: none;
+  }
+
+  .ss-map .ss-attr--short {
+    display: inline;
   }
 
   .ss-map .ss-map-card__play {

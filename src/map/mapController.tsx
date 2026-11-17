@@ -8,7 +8,7 @@ import { loadLandFeatures, loadStateFeatures } from './landData';
 import { SELECTED_ICON, STATION_ICON } from './markerIcons';
 import { MapPopupCard } from './MapPopup';
 import { hasValidCoords } from './markerSet';
-import { minZoomFor } from './zoom';
+import { minZoomFor, panBoxFor } from './zoom';
 
 export interface MapControllerOptions {
   onZoomLimits: (atMin: boolean, atMax: boolean) => void;
@@ -25,11 +25,22 @@ export interface MapController {
   dispose(): void;
 }
 
-const ATTRIBUTION = 'Stations: Radio Browser · Map: US Census Bureau, Natural Earth';
+// Phones get the short form (CSS picks one under 768px); both are one line.
+const ATTRIBUTION =
+  '<span class="ss-attr--long">Stations: Radio Browser · Map: US Census Bureau, Natural Earth</span>' +
+  '<span class="ss-attr--short">Radio Browser · Census · Natural Earth</span>';
 // Bounds the pan: the lower 48, Alaska, Hawaii and Puerto Rico are reachable, the rest of the world is not.
-const PAN_BOUNDS = L.latLngBounds([5, -180], [75, -50]);
+// Widened by panBounds() when a panel's view is larger than this box.
+const PAN_BASE = { south: 5, west: -180, north: 75, east: -50 };
 const LOWER_48 = L.latLngBounds([24.5, -125], [49.5, -66.5]);
-const FIT_PADDING: [number, number] = [24, 24];
+// fitBounds centres the view on the bounds' midpoint in Mercator, which is not the latitude midpoint.
+const LOWER_48_CENTRE = (() => {
+  const sw = L.CRS.EPSG3857.project(LOWER_48.getSouthWest());
+  const ne = L.CRS.EPSG3857.project(LOWER_48.getNorthEast());
+  const c = L.CRS.EPSG3857.unproject(L.point((sw.x + ne.x) / 2, (sw.y + ne.y) / 2));
+  return { lat: c.lat, lng: c.lng };
+})();
+const FIT_PADDING: [number, number] = [12, 12];
 const MAX_ZOOM = 9;
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
 const FOCUS_MIN_ZOOM = 5;
@@ -78,12 +89,22 @@ function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 // Clusters are not tab stops: the map container is the single tab stop.
 L.MarkerCluster.mergeOptions({ keyboard: false });
 
+/**
+ * The pan box for the panel at its current size. Sized for the minimum zoom, the largest view, so every zoom stays inside.
+ * Without this a tall panel's view is taller than the fixed box, and Leaflet centres the box rather than the lower 48.
+ */
+function panBounds(el: HTMLElement, zoom: number): L.LatLngBounds {
+  const b = panBoxFor(el.clientWidth, el.clientHeight, zoom, LOWER_48_CENTRE, PAN_BASE);
+  return L.latLngBounds([b.south, b.west], [b.north, b.east]);
+}
+
 export function createMapController(el: HTMLElement, opts: MapControllerOptions): MapController {
+  const startZoom = minZoomFor(el.clientWidth);
   const map = L.map(el, {
     worldCopyJump: false,
-    maxBounds: PAN_BOUNDS,
+    maxBounds: panBounds(el, startZoom),
     maxBoundsViscosity: 1,
-    minZoom: minZoomFor(el.clientWidth),
+    minZoom: startZoom,
     maxZoom: MAX_ZOOM,
     zoomSnap: 0.1,
     zoomDelta: 0.5,
@@ -94,11 +115,9 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   map.attributionControl.setPrefix(false);
   map.attributionControl.addAttribution(ATTRIBUTION);
   // Fits the lower 48 on load, on phones too. Deferred to the first non-zero width when the panel is hidden.
-  let fitted = false;
   function fitLower48(animate: boolean) {
     if (el.clientWidth <= 0) return;
     map.fitBounds(LOWER_48, { padding: FIT_PADDING, animate });
-    fitted = true;
   }
   fitLower48(false);
 
@@ -303,6 +322,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     if (el.clientWidth <= 0) return;
     const min = minZoomFor(el.clientWidth);
     map.setMinZoom(min);
+    map.setMaxBounds(panBounds(el, min));
     if (map.getZoom() < min) map.setZoom(min, { animate: false });
     // markercluster builds its per-zoom grids from the minimum zoom it had when filled, and its tree walk assumes
     // that minimum is the current one. Any change of the whole minimum (narrower or wider panel) rebuilds the grids.
@@ -313,9 +333,10 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     ? null
     : new ResizeObserver(() => {
         if (disposed) return;
+        // invalidateSize keeps the old centre, so refit: the lower 48 must be centred for every panel shape.
         map.invalidateSize();
         fitMinZoom();
-        if (!fitted) fitLower48(false);
+        fitLower48(false);
         emitZoom();
         // A resize can leave the open popup past the edge: pan it back inside.
         if (openId !== null && popup.isOpen()) {
@@ -336,24 +357,26 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   const land = readToken('--ss-map-land');
   const landDim = readToken('--ss-map-land-dim');
   const line = readToken('--ss-map-line');
-  loadLandFeatures()
-    .then((fc) => {
-      if (disposed) return;
-      L.geoJSON(fc, {
+  const stateLine = readToken('--ss-map-state-line');
+  // Both layers load in parallel but are added in order: the world first, the states on top. Adding them as each
+  // load resolves let the dim world cover the US whenever it finished last.
+  const worldReady = loadLandFeatures().catch(() => null);
+  const statesReady = loadStateFeatures().catch(() => null);
+  void Promise.all([worldReady, statesReady]).then(([world, states]) => {
+    if (disposed) return;
+    if (world) {
+      L.geoJSON(world, {
         interactive: false,
         style: { fillColor: landDim, fillOpacity: 1, color: line, weight: 0.5, opacity: 1 },
       }).addTo(map);
-    })
-    .catch(() => undefined);
-  loadStateFeatures()
-    .then((fc) => {
-      if (disposed) return;
-      L.geoJSON(fc, {
+    }
+    if (states) {
+      L.geoJSON(states, {
         interactive: false,
-        style: { fillColor: land, fillOpacity: 1, color: line, weight: 0.6, opacity: 1 },
+        style: { fillColor: land, fillOpacity: 1, color: stateLine, weight: 0.75, opacity: 1 },
       }).addTo(map);
-    })
-    .catch(() => undefined);
+    }
+  });
 
   return {
     setStations,
