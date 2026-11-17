@@ -8,6 +8,7 @@ import { loadLandFeatures, loadStateFeatures } from './landData';
 import { SELECTED_ICON, STATION_ICON } from './markerIcons';
 import { MapPopupCard } from './MapPopup';
 import { hasValidCoords } from './markerSet';
+import { minZoomFor } from './zoom';
 
 export interface MapControllerOptions {
   onZoomLimits: (atMin: boolean, atMax: boolean) => void;
@@ -28,9 +29,6 @@ const ATTRIBUTION = 'Stations: Radio Browser · Map: US Census Bureau, Natural E
 // Bounds the pan: the lower 48, Alaska, Hawaii and Puerto Rico are reachable, the rest of the world is not.
 const PAN_BOUNDS = L.latLngBounds([5, -180], [75, -50]);
 const LOWER_48 = L.latLngBounds([24.5, -125], [49.5, -66.5]);
-const LOWER_48_LNG_SPAN = 58.5;
-// The lower 48 never get narrower than this share of the panel width.
-const LOWER_48_MIN_SHARE = 0.6;
 const FIT_PADDING: [number, number] = [24, 24];
 const MAX_ZOOM = 9;
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
@@ -42,16 +40,6 @@ const SELECTED_Z_OFFSET = 10000;
 interface Entry {
   station: Station;
   marker: L.Marker;
-}
-
-/**
- * Smallest zoom at which the lower 48 span about 60% of the panel width (hundredth-step ceiling, so
- * the share never drops below the target). Recomputed on every resize.
- */
-function minZoomFor(width: number): number {
-  if (!(width > 0)) return 0;
-  const pixelsPerDegree = (LOWER_48_MIN_SHARE * width) / LOWER_48_LNG_SPAN;
-  return Math.max(0, Math.ceil(Math.log2((pixelsPerDegree * 360) / 256) * 100) / 100);
 }
 
 function prefersReducedMotion(): boolean {
