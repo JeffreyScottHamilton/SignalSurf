@@ -8,10 +8,17 @@ import { loadStateFeatures } from './landData';
 import { SELECTED_ICON, STATION_ICON } from './markerIcons';
 import { MapPopupCard } from './MapPopup';
 import { hasValidCoords } from './markerSet';
-import { minZoomFor, panBoxFor, stateWeightFor, US_CENTRE_LNG } from './zoom';
+import { detailShown, mapMaxZoomFor, minZoomFor, panBoxFor, stateWeightFor, tilesUnavailable, US_CENTRE_LNG } from './zoom';
+import { TILE_SOURCES } from './tileLayers';
+import { buildMaskFeature } from './mask';
+import type { MapStyle } from '@/types';
 
 export interface MapControllerOptions {
   onZoomLimits: (atMin: boolean, atMax: boolean) => void;
+  /** The map style to start with (from settings). */
+  initialStyle: MapStyle;
+  /** Called with true when the detailed tiles have failed to load, and with false when that is cleared. */
+  onTilesUnavailable: (unavailable: boolean) => void;
 }
 
 /** Imperative Leaflet side of the map. Created once per mount, disposed on unmount. */
@@ -22,6 +29,8 @@ export interface MapController {
   zoomOut(): void;
   /** Returns the view to the lower 48 states fit. */
   resetView(): void;
+  /** Switches the tile imagery. Below the detail zoom this only sets the choice for later. */
+  setMapStyle(style: MapStyle): void;
   dispose(): void;
 }
 
@@ -41,7 +50,11 @@ const LOWER_48_CENTRE = (() => {
   return { lat: c.lat, lng: c.lng };
 })();
 const FIT_PADDING: [number, number] = [12, 12];
-const MAX_ZOOM = 9;
+// The dimming mask has its own pane: above the tiles (z 200), below the state outlines (overlay, z 400).
+const MASK_PANE = 'ssMask';
+const MASK_PANE_Z = 350;
+const MASK_OPACITY = 0.8;
+const STYLES: MapStyle[] = ['streets', 'satellite'];
 // Selecting a station zooms to at least FOCUS_MIN_ZOOM, never deeper than FOCUS_MAX_ZOOM, so the region stays in view.
 const FOCUS_MIN_ZOOM = 5;
 const FOCUS_MAX_ZOOM = 6;
@@ -107,7 +120,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     maxBounds: panBounds(el, startZoom),
     maxBoundsViscosity: 1,
     minZoom: startZoom,
-    maxZoom: MAX_ZOOM,
+    maxZoom: mapMaxZoomFor(opts.initialStyle),
     zoomSnap: 0.1,
     zoomDelta: 0.5,
     preferCanvas: true,
@@ -116,6 +129,43 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   });
   map.attributionControl.setPrefix(false);
   map.attributionControl.addAttribution(ATTRIBUTION);
+
+  let mapStyle: MapStyle = opts.initialStyle;
+  // Created now, added to the map only from DETAIL_ZOOM on: no tile request is made before then.
+  const tileLayers = {} as Record<MapStyle, L.TileLayer>;
+  for (const s of STYLES) {
+    const src = TILE_SOURCES[s];
+    tileLayers[s] = L.tileLayer(src.url, {
+      attribution: src.attribution,
+      subdomains: src.subdomains ?? 'abc',
+      maxZoom: src.maxZoom,
+      maxNativeZoom: src.maxNativeZoom,
+    });
+  }
+  // Tile results for the current style. A failure is counted per style and cleared when the style changes.
+  let tileStats = { loads: 0, errors: 0 };
+  let tilesDown = false;
+  for (const s of STYLES) {
+    tileLayers[s].on('tileload', () => {
+      if (s === mapStyle) tileStats.loads += 1;
+    });
+    tileLayers[s].on('tileerror', () => {
+      if (s !== mapStyle || tilesDown) return;
+      tileStats.errors += 1;
+      if (tilesUnavailable(tileStats)) {
+        tilesDown = true;
+        opts.onTilesUnavailable(true);
+        applyDetail();
+      }
+    });
+  }
+  map.createPane(MASK_PANE).style.zIndex = String(MASK_PANE_Z);
+  // Set once the state shapes load (see the land section below).
+  let maskLayer: L.GeoJSON | null = null;
+  let statesLayer: L.GeoJSON | null = null;
+  const land = readToken('--ss-map-land');
+  const stateLine = readToken('--ss-map-state-line');
+  const ocean = readToken('--ss-map-ocean');
   // Fits the lower 48 on load, on phones too. Deferred to the first non-zero width when the panel is hidden.
   function fitLower48(animate: boolean) {
     if (el.clientWidth <= 0) return;
@@ -129,18 +179,23 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   let openRoot: Root | null = null;
   // At most one reveal is pending: the latest selection wins.
   let pendingReveal: (() => void) | null = null;
+  // The station last focused and the zoom it was focused at: a resize keeps that station centred.
+  let lastFocus: { id: string; zoom: number } | null = null;
   // The blue selected dot is its own marker on the map, outside the cluster group, so it is never hidden.
   let selectionMarker: L.Marker | null = null;
   const entries = new Map<string, Entry>();
 
-  const cluster = L.markerClusterGroup({
-    chunkedLoading: true,
-    showCoverageOnHover: false,
-    maxClusterRadius: 22,
-    spiderfyOnMaxZoom: true,
-    iconCreateFunction: clusterIcon,
-  });
-  cluster.addTo(map);
+  function makeCluster(): L.MarkerClusterGroup {
+    return L.markerClusterGroup({
+      chunkedLoading: true,
+      showCoverageOnHover: false,
+      maxClusterRadius: 22,
+      spiderfyOnMaxZoom: true,
+      iconCreateFunction: clusterIcon,
+    });
+  }
+  // Replaced by rebuildClusters when the zoom range changes: markercluster reads the range once, when it is added.
+  let cluster = makeCluster().addTo(map);
   // The lowest zoom markercluster has per-zoom grids for. See fitMinZoom.
   let clusterFloor = Math.floor(map.getMinZoom());
 
@@ -268,6 +323,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     const ll = e.marker.getLatLng();
     const zoom = Math.min(FOCUS_MAX_ZOOM, Math.max(map.getZoom(), FOCUS_MIN_ZOOM));
     const id = e.station.id;
+    lastFocus = { id, zoom };
     cancelPendingReveal();
     // The popup is anchored at the station's coordinates, so it opens even while the marker is inside a cluster.
     const reveal = () => {
@@ -308,19 +364,76 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
 
   function emitZoom() {
     const z = map.getZoom();
+    // Exposed for the end-to-end test, which cannot read Leaflet's zoom any other way.
+    el.dataset.zoom = String(z);
     opts.onZoomLimits(z <= map.getMinZoom(), z >= map.getMaxZoom());
   }
   map.on('zoomend', emitZoom);
-  // The state borders keep their on-screen width as the map zooms (see stateWeightFor).
-  let statesLayer: L.GeoJSON | null = null;
-  map.on('zoomend', () => statesLayer?.setStyle({ weight: stateWeightFor(map.getZoom()) }));
+  // Exposed for the end-to-end test, which aims the map at a point with it.
+  function emitCentre() {
+    const c = map.getCenter();
+    el.dataset.center = `${c.lat},${c.lng}`;
+  }
+  map.on('moveend', emitCentre);
+  // Tiles, mask and state style follow the zoom (and the state borders keep their on-screen width, see stateWeightFor).
+  map.on('zoomend', applyDetail);
   emitZoom();
 
-  /** Rebuilds the cluster grids from the current minimum zoom and re-adds every marker. */
+  /**
+   * Replaces the cluster group, so markercluster builds its grids for the current zoom range (minimum and maximum)
+   * and every marker is re-added.
+   */
   function rebuildClusters() {
     clusterFloor = Math.floor(map.getMinZoom());
     cluster.clearLayers();
+    cluster.remove();
+    cluster = makeCluster().addTo(map);
     cluster.addLayers([...entries.values()].map((e) => e.marker));
+  }
+
+  /** Detail (tiles, mask, outlines) is on at DETAIL_ZOOM and above, unless the tiles have failed. */
+  function detailNow(): boolean {
+    return detailShown(map.getZoom()) && !tilesDown;
+  }
+
+  /** The state shapes: the vector fill below the detail zoom, outlines only above it. */
+  function stateStyle(detail: boolean): L.PathOptions {
+    const weight = stateWeightFor(map.getZoom());
+    return detail
+      ? { fill: false, color: stateLine, weight, opacity: 1 }
+      : { fill: true, fillColor: land, fillOpacity: 1, color: stateLine, weight, opacity: 1 };
+  }
+
+  /** Shows or hides a layer, only when its state changes, so tiles are not re-requested needlessly. */
+  function setShown(layer: L.Layer, shown: boolean) {
+    if (shown && !map.hasLayer(layer)) layer.addTo(map);
+    else if (!shown && map.hasLayer(layer)) map.removeLayer(layer);
+  }
+
+  /** Brings the tile layer, mask and state style in line with the zoom, the style and the tile health. */
+  function applyDetail() {
+    const detail = detailNow();
+    for (const s of STYLES) setShown(tileLayers[s], detail && s === mapStyle);
+    if (maskLayer) setShown(maskLayer, detail);
+    if (statesLayer) {
+      setShown(statesLayer, true);
+      statesLayer.setStyle(stateStyle(detail));
+    }
+  }
+
+  function setMapStyle(style: MapStyle) {
+    if (disposed || style === mapStyle) return;
+    mapStyle = style;
+    tileStats = { loads: 0, errors: 0 };
+    if (tilesDown) {
+      tilesDown = false;
+      opts.onTilesUnavailable(false);
+    }
+    // The street and satellite layers have different top levels, and markercluster reads the top level once.
+    map.setMaxZoom(mapMaxZoomFor(style));
+    rebuildClusters();
+    applyDetail();
+    emitZoom();
   }
 
   function fitMinZoom() {
@@ -341,7 +454,15 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
         // invalidateSize keeps the old centre, so refit: the lower 48 must be centred for every panel shape.
         map.invalidateSize();
         fitMinZoom();
-        fitLower48(false);
+        // A picked station stays centred at its focus zoom through a resize. On a phone the sheet collapses right after a
+        // pick: refitting the lower 48 here cancelled the fly-to, and so did reading the zoom mid-flight. invalidateSize
+        // also fires moveend, which ends the pending reveal early, so the flight state cannot be used here.
+        const focused = selectedId !== null ? entries.get(selectedId) : undefined;
+        if (focused && lastFocus !== null && lastFocus.id === focused.station.id) {
+          map.setView(focused.marker.getLatLng(), lastFocus.zoom, { animate: false });
+        } else {
+          fitLower48(false);
+        }
         emitZoom();
         // A resize can leave the open popup past the edge: pan it back inside.
         if (openId !== null && popup.isOpen()) {
@@ -357,17 +478,18 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
   }
   el.addEventListener('keydown', onKeyDown);
 
-  // Land: the US states, drawn as one non-interactive canvas layer over the ocean. A failed load leaves the
-  // ocean base map, with markers still working.
-  const land = readToken('--ss-map-land');
-  const stateLine = readToken('--ss-map-state-line');
+  // Land: the US states, one non-interactive layer over the ocean. A failed load leaves the ocean base map, with
+  // markers still working. Above the detail zoom the mask dims everything outside the states.
   void loadStateFeatures()
     .then((states) => {
       if (disposed) return;
-      statesLayer = L.geoJSON(states, {
+      maskLayer = L.geoJSON(buildMaskFeature(states), {
+        pane: MASK_PANE,
         interactive: false,
-        style: { fillColor: land, fillOpacity: 1, color: stateLine, weight: stateWeightFor(map.getZoom()), opacity: 1 },
-      }).addTo(map);
+        style: { stroke: false, fill: true, fillColor: ocean, fillOpacity: MASK_OPACITY },
+      });
+      statesLayer = L.geoJSON(states, { interactive: false, style: stateStyle(detailNow()) });
+      applyDetail();
     })
     .catch(() => null);
 
@@ -383,6 +505,7 @@ export function createMapController(el: HTMLElement, opts: MapControllerOptions)
     resetView() {
       if (!disposed) fitLower48(!prefersReducedMotion());
     },
+    setMapStyle,
     dispose() {
       if (disposed) return;
       disposed = true;

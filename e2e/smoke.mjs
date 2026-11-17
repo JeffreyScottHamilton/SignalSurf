@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
 import { createRequire, register } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -41,6 +42,44 @@ function screenOf(lat, lng, w, h, z) {
     y: h / 2 - (merc(lat) - merc(LOW48_CENTRE.lat)) * ((256 * 2 ** z) / (2 * Math.PI)),
   };
 }
+/** A solid square PNG, used as a stand-in map tile in the route tests. */
+function solidPng(size, [r, g, b]) {
+  const table = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const byte of buf) c = table[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  const row = Buffer.alloc(1 + size * 3); // filter byte 0 (none) then RGB pixels
+  for (let x = 0; x < size; x++) row.set([r, g, b], 1 + x * 3);
+  const raw = Buffer.concat(Array.from({ length: size }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+const TILE_PNG = solidPng(256, [38, 52, 46]);
+const DENVER = [39.74, -104.99];
+
 const count1 = (n) => (n === 1 ? '1 station' : `${new Intl.NumberFormat('en-US').format(n)} stations`);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -194,6 +233,15 @@ async function main() {
       }
       return route.continue();
     });
+    // Map tiles are recorded. 'abort' (the default) fails them; 'png' answers with TILE_PNG. Registered after the catch-all, so they win.
+    const tileRequests = [];
+    let tileMode = 'abort';
+    const onTile = (route) => {
+      tileRequests.push(route.request().url());
+      return tileMode === 'png' ? route.fulfill({ status: 200, contentType: 'image/png', body: TILE_PNG }) : route.abort();
+    };
+    await page.route('**basemaps.cartocdn.com/**', onTile); // the host is basemaps.cartocdn.com
+    await page.route('**basemap.nationalmap.gov/**', onTile);
     const waitOpen = async (n, timeout = 3000) => {
       const end = Date.now() + timeout;
       while (Date.now() < end) {
@@ -246,6 +294,68 @@ async function main() {
     const chip = (name) => page.locator('.ss-chip', { hasText: new RegExp(`^${name}$`) });
     const navTab = (name) => page.locator('header nav button', { hasText: new RegExp(`^${name}$`) });
 
+    const mapZoom = async () => Number(await page.locator('.ss-map__canvas').getAttribute('data-zoom'));
+    const attribution = () => page.locator('.leaflet-control-attribution').textContent();
+    const toggleButton = () => page.locator('.ss-map__zoom-btn[aria-pressed]');
+    const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    async function mapColours(p) {
+      const token = (name) =>
+        p.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+      return { usFill: hexRgb(await token('--ss-map-land')), stateLine: hexRgb(await token('--ss-map-state-line')) };
+    }
+    /**
+     * Resets to the lower 48, then drags the map until (lat, lng) is in the middle of the canvas, and leaves it at about
+     * zoom 5 with that centre. The aim is refined at zoom 8, 11, 13 and 15 in turn: a pixel at zoom 15 is a tiny fraction of
+     * a degree, so the centre has to be right at the top zoom. A drag only starts inside the canvas, so the first aim
+     * is made at the reset zoom, where the offset fits. Each drag starts from the map's own centre (data-center).
+     */
+    const centreMapOn = async (lat, lng) => {
+      const canvas = page.locator('.ss-map__canvas');
+      const aim = async () => {
+        for (let pass = 0; pass < 3; pass++) {
+          const b = await canvas.boundingBox();
+          const cur = await mapZoom();
+          const [clat, clng] = (await canvas.getAttribute('data-center')).split(',').map(Number);
+          const dx = ((lng - clng) * 256 * 2 ** cur) / 360;
+          const dy = (-(merc(lat) - merc(clat)) * 256 * 2 ** cur) / (2 * Math.PI);
+          if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) break;
+          const to = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+          const from = { x: to.x + dx, y: to.y + dy };
+          await page.mouse.move(from.x, from.y);
+          await page.mouse.down();
+          for (let i = 1; i <= 20; i++) {
+            await page.mouse.move(from.x + ((to.x - from.x) * i) / 20, from.y + ((to.y - from.y) * i) / 20);
+          }
+          await page.mouse.up();
+          await page.waitForTimeout(500);
+        }
+      };
+      await page.locator('button[aria-label="Reset map to the lower 48 states"]').click();
+      await page.waitForTimeout(900);
+      await aim();
+      for (const z of [8, 11, 13, 15]) {
+        await zoomTo(z);
+        await aim();
+      }
+      // Zooming out about the middle keeps the aim, so the caller can zoom back in with + from here.
+      for (let i = 0; i < 25 && (await mapZoom()) > 5; i++) {
+        await page.locator('button[aria-label="Zoom out"]').click();
+        await page.waitForTimeout(300);
+      }
+      await page.waitForTimeout(500);
+    };
+
+    /** Zooms in with the + button until the map is at least at zoom z. */
+    const zoomTo = async (z) => {
+      for (let i = 0; i < 20 && (await mapZoom()) < z; i++) {
+        await page.locator('button[aria-label="Zoom in"]').click();
+        await page.waitForTimeout(400);
+      }
+      await page.waitForTimeout(500);
+      const now = await mapZoom();
+      expect(now >= z, `zoom ${now} is below ${z}`);
+    };
+
     let firstName = null;
     let secondName = null;
 
@@ -263,6 +373,11 @@ async function main() {
       await sleep(1500);
       await page.screenshot({ path: join(SHOTS, '1440x900-world.png') });
       return `${n} rows, no directory list request`;
+    });
+
+    await step('a2', 'start view makes no map tile requests', async () => {
+      expect(tileRequests.length === 0, `${tileRequests.length} tile requests at the start, first: ${tileRequests[0]}`);
+      return 'zoom below 6, no tile requests';
     });
 
     // b. Search narrows results; a nonsense query shows the empty state; Reset restores rows.
@@ -647,84 +762,73 @@ async function main() {
 
     // n. Zoomed to the top (+ button, then wheel) over the map, the land is the US fill with visible state borders and
     // no very light pixels. Markers are hidden with a query that matches nothing, so only the map is measured.
-    await step('n', 'zoomed to max via + and wheel: US fill and state lines present, 0% very light pixels', async () => {
-      const token = (name) =>
-        page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
-      const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-      const usFill = hexRgb(await token('--ss-map-land'));
-      const stateLine = hexRgb(await token('--ss-map-state-line'));
-      const canvas = page.locator('.ss-map__canvas');
-      const plus = page.locator('button[aria-label="Zoom in"]');
-      const helper = await page.context().newPage();
-      const measure = async () => {
-        const box = await canvas.boundingBox();
-        const rects = await page.evaluate(() => {
-          const c = document.querySelector('.ss-map__canvas').getBoundingClientRect();
-          const out = [];
-          for (const sel of ['.ss-map__zoom', '.leaflet-control-attribution', '.ss-map__status', '.leaflet-popup']) {
-            for (const el of document.querySelectorAll(sel)) {
-              const r = el.getBoundingClientRect();
-              out.push({ x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height });
+    /** Samples the canvas (control and popup boxes skipped): very light pixels, US fill and state-line colour. */
+    async function measureMap(p, { usFill, stateLine }) {
+      const canvas = p.locator('.ss-map__canvas');
+      const helper = await p.context().newPage();
+      try {
+      const box = await canvas.boundingBox();
+      const rects = await p.evaluate(() => {
+        const c = document.querySelector('.ss-map__canvas').getBoundingClientRect();
+        const out = [];
+        for (const sel of ['.ss-map__zoom', '.leaflet-control-attribution', '.ss-map__status', '.leaflet-popup']) {
+          for (const el of document.querySelectorAll(sel)) {
+            const r = el.getBoundingClientRect();
+            out.push({ x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height });
+          }
+        }
+        return out;
+      });
+      const png = await canvas.screenshot({ type: 'png' });
+        return await helper.evaluate(
+          async ({ b64, rects, w, h, usFill, stateLine }) => {
+          const img = new Image();
+          img.src = `data:image/png;base64,${b64}`;
+          await img.decode();
+          const c = document.createElement('canvas');
+          c.width = img.width;
+          c.height = img.height;
+          const cx = c.getContext('2d');
+          cx.drawImage(img, 0, 0);
+          const d = cx.getImageData(0, 0, img.width, img.height).data;
+          const k = img.width / w;
+          const near = (r, g, b, t, tol) => Math.abs(r - t[0]) <= tol && Math.abs(g - t[1]) <= tol && Math.abs(b - t[2]) <= tol;
+          let total = 0, light = 0, us = 0, state = 0;
+          for (let y = 0; y < img.height; y++) {
+            for (let x = 0; x < img.width; x++) {
+              const px = x / k, py = y / k;
+              if (rects.some((r) => px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h)) continue;
+              const i = (y * img.width + x) * 4;
+              const r = d[i], g = d[i + 1], b = d[i + 2];
+              total++;
+              if ((r + g + b) / 3 >= 120) light++;
+              else if (near(r, g, b, usFill, 4)) us++;
+              else if (near(r, g, b, stateLine, 12)) state++;
             }
           }
-          return out;
-        });
-        const png = await canvas.screenshot({ type: 'png' });
-        return helper.evaluate(
-          async ({ b64, rects, w, h, usFill, stateLine }) => {
-            const img = new Image();
-            img.src = `data:image/png;base64,${b64}`;
-            await img.decode();
-            const c = document.createElement('canvas');
-            c.width = img.width;
-            c.height = img.height;
-            const cx = c.getContext('2d');
-            cx.drawImage(img, 0, 0);
-            const d = cx.getImageData(0, 0, img.width, img.height).data;
-            const k = img.width / w;
-            const near = (r, g, b, t, tol) => Math.abs(r - t[0]) <= tol && Math.abs(g - t[1]) <= tol && Math.abs(b - t[2]) <= tol;
-            let total = 0, light = 0, us = 0, state = 0;
-            for (let y = 0; y < img.height; y++) {
-              for (let x = 0; x < img.width; x++) {
-                const px = x / k, py = y / k;
-                if (rects.some((r) => px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h)) continue;
-                const i = (y * img.width + x) * 4;
-                const r = d[i], g = d[i + 1], b = d[i + 2];
-                total++;
-                if ((r + g + b) / 3 >= 120) light++;
-                else if (near(r, g, b, usFill, 4)) us++;
-                else if (near(r, g, b, stateLine, 12)) state++;
-              }
-            }
-            return { total, light, us, state };
-          },
-          { b64: png.toString('base64'), rects, w: box.width, h: box.height, usFill, stateLine },
-        );
-      };
+          return { total, light, us, state };
+        },
+        { b64: png.toString('base64'), rects, w: box.width, h: box.height, usFill, stateLine },
+      );
+      } finally {
+        await helper.close();
+      }
+    }
+
+    await step('n', 'zoomed to max via + and wheel: US fill and state lines present, 0% very light pixels', async () => {
+      const { usFill, stateLine } = await mapColours(page);
+      const canvas = page.locator('.ss-map__canvas');
+      const plus = page.locator('button[aria-label="Zoom in"]');
+      const measure = () => measureMap(page, { usFill, stateLine });
       try {
         await search().fill('qzxwv9kjhgfd');
         await page.waitForTimeout(700);
-        // St. Louis sits on the Illinois and Missouri border, so the top zoom has state lines in view.
+        // The Colorado and Kansas border is a straight line at longitude -102.05. Centred on it, state lines stay in view at any zoom.
         const box0 = await canvas.boundingBox();
-        const ST_LOUIS = [38.63, -90.2];
-        const centreOn = async (lat, lng) => {
-          await page.locator('button[aria-label="Reset map to the lower 48 states"]').click();
-          await page.waitForTimeout(900);
-          const b = await canvas.boundingBox();
-          const p = screenOf(lat, lng, b.width, b.height, fitZoomFor(b.width, b.height));
-          const from = { x: b.x + p.x, y: b.y + p.y };
-          const to = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-          await page.mouse.move(from.x, from.y);
-          await page.mouse.down();
-          for (let i = 1; i <= 20; i++) {
-            await page.mouse.move(from.x + ((to.x - from.x) * i) / 20, from.y + ((to.y - from.y) * i) / 20);
-          }
-          await page.mouse.up();
-          await page.waitForTimeout(800);
-        };
+        const BORDER_POINT = [39.0, -102.05];
         expect(box0.width > 0, 'map has no size');
         // Button zoom to the top, centred on St. Louis.
-        await centreOn(...ST_LOUIS);
+        await centreMapOn(...BORDER_POINT);
         for (let i = 0; i < 30 && !(await plus.isDisabled()); i++) {
           await plus.click({ timeout: 1500 }).catch(() => {});
           await page.waitForTimeout(250);
@@ -733,7 +837,7 @@ async function main() {
         const byButton = await measure();
         expect(await plus.isDisabled(), 'the + button did not reach the maximum zoom');
         // Wheel over the middle of the map to the top, centred on St. Louis.
-        await centreOn(...ST_LOUIS);
+        await centreMapOn(...BORDER_POINT);
         const b2 = await canvas.boundingBox();
         await page.mouse.move(b2.x + b2.width / 2, b2.y + b2.height / 2);
         for (let i = 0; i < 40 && !(await plus.isDisabled()); i++) {
@@ -751,11 +855,102 @@ async function main() {
         }
         return `button: ${byButton.light} light px, US ${((100 * byButton.us) / byButton.total).toFixed(1)}%, borders ${byButton.state} px; wheel: ${byWheel.light} light px, borders ${byWheel.state} px`;
       } finally {
-        await helper.close();
         await search().fill('');
         await page.waitForTimeout(700);
         await waitForRows(1);
       }
+    });
+
+    // o. Streets at Denver zoom 11: CARTO tiles, the CARTO and OpenStreetMap credit, and no unavailable chip.
+    await step('o', 'Denver at zoom 11 requests CARTO street tiles; attribution credits CARTO and OpenStreetMap', async () => {
+      tileMode = 'png';
+      // Step n left the street tiles marked as failed; they are retried after a reload or a style change. Start clean.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForRows(10, 30000);
+      await page.waitForSelector('.ss-map__canvas[data-zoom]', { timeout: 30000 });
+      const before = tileRequests.length;
+      await centreMapOn(...DENVER);
+      await zoomTo(11);
+      await page.waitForTimeout(800);
+      const urls = tileRequests.slice(before);
+      const carto = urls.filter((u) => u.includes('basemaps.cartocdn.com'));
+      expect(carto.length > 0, 'no CARTO tile requests at zoom 11');
+      const other = urls.find((u) => !u.includes('basemaps.cartocdn.com'));
+      expect(!other, `non-CARTO tile request in streets mode: ${other}`);
+      const attr = await attribution();
+      expect(attr.includes('Stations: Radio Browser') && attr.includes('Map: US Census Bureau'), `base credit missing: ${attr}`);
+      expect(attr.includes('CARTO') && attr.includes('OpenStreetMap'), `street credit missing: ${attr}`);
+      expect((await page.locator('.ss-map__status', { hasText: 'Detailed map unavailable' }).count()) === 0, 'unavailable chip shown while tiles load');
+      return `${carto.length} CARTO tile requests at zoom ${(await mapZoom()).toFixed(1)}`;
+    });
+
+    // p. Satellite view: USGS tiles after the toggle, the imagery credit, and the choice survives a reload.
+    await step('p', 'Satellite view requests USGS imagery; aria-pressed flips; reload keeps satellite', async () => {
+      expect((await toggleButton().getAttribute('aria-label')) === 'Satellite view', 'toggle does not offer satellite');
+      expect((await toggleButton().getAttribute('aria-pressed')) === 'false', 'streets is shown as pressed');
+      const before = tileRequests.length;
+      await toggleButton().click();
+      await page.waitForFunction(() => {
+        const b = document.querySelector('.ss-map__zoom-btn[aria-pressed]');
+        return b?.getAttribute('aria-label') === 'Map view' && b.getAttribute('aria-pressed') === 'true';
+      }, null, { timeout: 5000 });
+      await page.waitForTimeout(1000);
+      const usgs = tileRequests.slice(before).filter((u) => u.includes('basemap.nationalmap.gov'));
+      expect(usgs.length > 0, 'no USGS tile requests after the toggle');
+      const attr = await attribution();
+      expect(attr.includes('Imagery: USGS') && !attr.includes('CARTO'), `imagery credit wrong: ${attr}`);
+      const beforeReload = tileRequests.length;
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForRows(10, 30000);
+      await page.waitForSelector('.ss-map__zoom-btn[aria-label="Map view"][aria-pressed="true"]', { timeout: 15000 });
+      await centreMapOn(...DENVER);
+      await zoomTo(11);
+      await page.waitForTimeout(800);
+      const afterReload = tileRequests.slice(beforeReload).filter((u) => u.includes('basemap.nationalmap.gov'));
+      expect(afterReload.length > 0, 'no USGS tile requests after reload');
+      return `${usgs.length} USGS tile requests after toggle; ${afterReload.length} after reload`;
+    });
+
+    // r. Tile requests fail: the unavailable chip shows, and the vector US fill is back so the map is never blank.
+    await step('r', 'failed tile requests: Detailed map unavailable chip and the vector US fill', async () => {
+      tileMode = 'abort';
+      await toggleButton().click();
+      await page.waitForFunction(() => {
+        const b = document.querySelector('.ss-map__zoom-btn[aria-pressed]');
+        return b?.getAttribute('aria-label') === 'Satellite view' && b.getAttribute('aria-pressed') === 'false';
+      }, null, { timeout: 5000 });
+      await page.locator('.ss-map__status', { hasText: 'Detailed map unavailable' }).waitFor({ timeout: 20000 });
+      const m = await measureMap(page, await mapColours(page));
+      expect(m.us / m.total > 0.5, `US fill only ${((100 * m.us) / m.total).toFixed(1)}% with tiles failing`);
+      tileMode = 'png';
+      return `chip shown; US fill ${((100 * m.us) / m.total).toFixed(1)}%`;
+    });
+
+    // s. Phone: picking a station from the list zooms the map in and its marker is on screen.
+    await step('s', 'phone 390x844: choosing a station from the list zooms in and its marker is visible', async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForTimeout(400);
+      await page.locator('button[aria-label="Reset map to the lower 48 states"]').click();
+      await page.waitForTimeout(900);
+      const zoomBefore = await mapZoom();
+      await page.locator('.ss-sheet-handle').click();
+      await page.waitForTimeout(400);
+      await page.locator('.ss-list__scroll .ss-station-row').nth(3).click();
+      await page.waitForTimeout(1800);
+      const zoomAfter = await mapZoom();
+      expect(zoomAfter > zoomBefore, `zoom stayed at ${zoomBefore} after the pick (now ${zoomAfter})`);
+      const sel = await page.evaluate(() => {
+        const c = document.querySelector('.ss-map__canvas').getBoundingClientRect();
+        const m = document.querySelector('.ss-marker--selected');
+        if (!m) return { found: false };
+        const r = m.getBoundingClientRect();
+        const x = r.left + r.width / 2 - c.left;
+        const y = r.top + r.height / 2 - c.top;
+        return { found: true, inside: x > 0 && x < c.width && y > 0 && y < c.height };
+      });
+      expect(sel.found, 'selected station marker is not on the map');
+      expect(sel.inside, 'selected station marker is outside the visible map');
+      return `zoom ${zoomBefore} -> ${zoomAfter}, marker visible`;
     });
 
   } catch (err) {

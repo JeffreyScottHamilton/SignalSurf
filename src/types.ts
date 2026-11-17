@@ -23,6 +23,8 @@ export interface Station {
 export interface HistoryEntry { station: Station; playedAt: number } // epoch ms
 export type View = 'explore' | 'favorites' | 'history';
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+/** Map imagery: dark street tiles (CARTO) or USGS aerial imagery. Shown only from zoom 6 on. */
+export type MapStyle = 'streets' | 'satellite';
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'buffering' | 'paused' | 'error';
 export interface PlayerState {
   station: Station | null;

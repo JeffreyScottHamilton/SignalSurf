@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import './WorldMap.css';
-import { MinusIcon, PlusIcon, TargetIcon } from '@/components/common/icons';
+import { LayersIcon, MinusIcon, PlusIcon, TargetIcon } from '@/components/common/icons';
 import { useStore } from '@/lib/createStore';
 import { initExplore } from '@/state/explore';
 import { useMapStations, useMapStatus } from '@/state/mapData';
 import { uiStore } from '@/state/ui';
+import { settings, useSettings } from '@/storage/settings';
 import { createMapController, type MapController } from './mapController';
 
 export function WorldMap() {
@@ -14,10 +15,13 @@ export function WorldMap() {
   const drawn = useMapStations();
   const mapStatus = useMapStatus();
   const selected = useStore(uiStore, (s) => s.selected);
+  const { mapStyle } = useSettings();
+  const satellite = mapStyle === 'satellite';
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<MapController | null>(null);
   const [limits, setLimits] = useState({ atMin: true, atMax: false });
+  const [tilesDown, setTilesDown] = useState(false);
 
   useEffect(() => {
     initExplore();
@@ -27,8 +31,10 @@ export function WorldMap() {
     const el = canvasRef.current;
     if (!el) return;
     const ctrl = createMapController(el, {
+      initialStyle: settings.get().mapStyle,
       onZoomLimits: (atMin, atMax) =>
         setLimits((prev) => (prev.atMin === atMin && prev.atMax === atMax ? prev : { atMin, atMax })),
+      onTilesUnavailable: setTilesDown,
     });
     ctrlRef.current = ctrl;
     return () => {
@@ -36,6 +42,11 @@ export function WorldMap() {
       ctrlRef.current = null;
     };
   }, []);
+
+  // Later changes of the style (the toggle). The controller ignores a style it already has.
+  useEffect(() => {
+    ctrlRef.current?.setMapStyle(mapStyle);
+  }, [mapStyle]);
 
   // Declared after the controller effect so they always see a live controller.
   useEffect(() => {
@@ -51,7 +62,9 @@ export function WorldMap() {
       ? 'Loading stations…'
       : mapStatus === 'error'
         ? 'Station markers unavailable'
-        : null;
+        : tilesDown
+          ? 'Detailed map unavailable'
+          : null;
 
   return (
     <section className="ss-map" aria-label="Map">
@@ -68,6 +81,16 @@ export function WorldMap() {
         </p>
       )}
       <div className="ss-map__zoom">
+        <button
+          type="button"
+          className="ss-map__zoom-btn"
+          aria-label={satellite ? 'Map view' : 'Satellite view'}
+          aria-pressed={satellite}
+          title={satellite ? 'Map view' : 'Satellite view'}
+          onClick={() => settings.setMapStyle(satellite ? 'streets' : 'satellite')}
+        >
+          <LayersIcon size={18} />
+        </button>
         <button
           type="button"
           className="ss-map__zoom-btn"

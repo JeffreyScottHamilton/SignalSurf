@@ -29,8 +29,19 @@ Checked 2026-11-17 against `node_modules/<pkg>/package.json` (`license` field) a
 - `node_modules/us-atlas/LICENSE` (ISC): "Copyright 2013-2019 Michael Bostock. Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies."
 - The package states no licence for the Census Bureau data. The ISC licence covers the packaging and conversion. **The Census Bureau's own terms for these shapefiles are not verified** (not checked on the Census site from this sandbox).
 
+## Map tile services (not npm packages, not bundled)
+
+Loaded by the browser only at zoom 6 and above (`src/map/tileLayers.ts`). The sandbox proxy refused carto.com, openstreetmap.org and usgs.gov on 2026-11-17, so none of the terms below were re-checked; each needs a check before release.
+
+| Service | Host | Attribution shown | Terms to check |
+|---|---|---|---|
+| CARTO `dark_all` basemap (streets) | `basemap.cartocdn.com` | "© OpenStreetMap contributors © CARTO" (short form on phones) | https://carto.com/attributions |
+| OpenStreetMap data (inside the CARTO tiles) | via the CARTO tiles | "© OpenStreetMap contributors" | https://www.openstreetmap.org/copyright (ODbL) |
+| USGS `USGSImageryOnly` (satellite) | `basemap.nationalmap.gov` | "Imagery: USGS" | https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits |
+
 ## Notices and open items
 
 - The notices for every bundled package are in `public/THIRD-PARTY-NOTICES.txt`, which ships with the app (`dist/THIRD-PARTY-NOTICES.txt`).
 - Station logos and streams are loaded from third-party hosts. The app does not host or license them.
 - Open: the us-atlas terms above are not verified against the publisher. Re-check before a public release.
+- Open: the CARTO, OpenStreetMap and USGS tile terms in the table above are not verified from this sandbox. Re-check before a public release.

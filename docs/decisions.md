@@ -56,11 +56,28 @@ The earlier app wrote `signalsurf:favorites:v1`, `signalsurf:history:v1` and `si
 
 ## Map: US states only, whole-number zoom
 
-- The map draws only the US: the state outlines from `us-atlas/states-10m.json` (`src/map/landData.ts`), a separate chunk loaded with a dynamic import. Everything outside them is the ocean colour. The world-atlas land layer was removed.
+- Below zoom 6 the map draws only the US: the state outlines from `us-atlas/states-10m.json` (`src/map/landData.ts`), a separate chunk loaded with a dynamic import. Everything outside them is the ocean colour. The world-atlas land layer was removed. From zoom 6 the imagery section below applies.
 - The map opens fitted to the lower 48 (`LOWER_48` in `mapController.tsx`). Pan bounds are `[14,-190]` to `[74,-60]` (`PAN_BASE`), so Alaska (the Aleutians reach -188), Hawaii and Puerto Rico are reachable and nothing else. The minimum zoom shows the whole US, centred.
 - The state borders get wider as the map zooms (`stateWeightFor` in `src/map/zoom.ts`): a hairline at the start view, at least about 1px from zoom 6.
 - Attribution: "Stations: Radio Browser · Map: US Census Bureau".
 - The minimum zoom is a whole number (`minZoomFor` in `src/map/zoom.ts`), rounded down so the whole US (from -188 to -64) fits the panel width. Reason: markercluster walks its grid from `minZoom - 1` but builds its top level at `floor(minZoom) - 1`. With a fractional minimum, stations that never cluster were dropped from the map; the grids are also rebuilt whenever the whole minimum changes.
+
+## Map imagery: tiles from zoom 6, with a fallback
+
+Below zoom 6 the map is the vector outline view, and it makes no tile requests. From zoom 6 the map shows imagery, because at city scale the outline view does not show where a station sits. Two sources, both without a key or an account:
+
+- **Streets:** CARTO's dark basemap (`basemap.cartocdn.com`, `dark_all`), which matches the app's dark style. Maximum zoom 15.
+- **Satellite:** the USGS `USGSImageryOnly` service (`basemap.nationalmap.gov`). The `ImageryTopo` service is not published on that host, so the satellite view has no road or place labels. The service's top level is 16; the view allows one level of upscaling to 17.
+
+From zoom 6 a non-interactive mask dims land outside the US (a world rectangle with the state outlines cut out, at 0.8 opacity), and the state borders are drawn above the tiles.
+
+**Privacy.** At zoom 6 and above the browser requests map images from CARTO (streets) or USGS (satellite) only. Those requests reveal the area being viewed, at tile precision, to that host. The app does not proxy tiles, sends no search text or favourites anywhere, and adds no analytics. The street or satellite choice is saved in `roadtrip:settings:v1` on this device.
+
+**Fallback.** If at least 4 tile requests fail and none loads (`tilesUnavailable` in `src/map/zoom.ts`), the vector fill comes back, the mask and imagery are hidden, and the map shows "Detailed map unavailable". Markers and the outlines keep working, so the map is never blank.
+
+The marker clusters are rebuilt when the zoom range changes, because markercluster reads the map's minimum and maximum zoom only once, when the group is added.
+
+Attribution: the base credit is "Stations: Radio Browser · Map: US Census Bureau"; the active tile credit is added after it ("© OpenStreetMap contributors © CARTO", or "Imagery: USGS"). On phones the street credit uses the short form, but it stays on screen.
 
 ## Search and the list are local
 

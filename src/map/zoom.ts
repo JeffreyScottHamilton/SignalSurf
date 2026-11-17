@@ -1,3 +1,27 @@
+import type { MapStyle } from '@/types';
+
+/** From this zoom on the map shows tiles, a mask and state outlines. Below it the US is the vector fill, with no tile requests. */
+export const DETAIL_ZOOM = 6;
+/** Zoom of the street tiles' top level. */
+export const STREETS_MAX_ZOOM = 15;
+/** USGS imagery's native top level is 16; one level of upscaling is allowed past it. */
+export const SATELLITE_MAX_ZOOM = 17;
+/** Failed tile loads in a row (with no successful load) before the detailed map is treated as unavailable. */
+export const TILE_FAILURE_ERRORS = 4;
+
+export function detailShown(zoom: number): boolean {
+  return zoom >= DETAIL_ZOOM;
+}
+
+export function mapMaxZoomFor(style: MapStyle): number {
+  return style === 'satellite' ? SATELLITE_MAX_ZOOM : STREETS_MAX_ZOOM;
+}
+
+/** True when the tile layer has failed: several errors and not one successful load. */
+export function tilesUnavailable(stats: { loads: number; errors: number }): boolean {
+  return stats.loads === 0 && stats.errors >= TILE_FAILURE_ERRORS;
+}
+
 /** Western-most point of the allowed area in degrees: the Aleutians cross 180 and are unwrapped to about -188. */
 export const US_WEST = -188;
 /** Eastern-most point of the US shapes (Maine, Puerto Rico) plus a margin. */

@@ -3,6 +3,10 @@ Roadtrip Radio third-party notices
 
 Station data: Radio Browser (https://www.radio-browser.info/), released to the public domain by its operator.
 Map shapes: US state outlines from the US Census Bureau via the us-atlas package (ISC; the package README says: "This repository provides a convenient redistribution of the Census Bureau’s cartographic boundary shapefiles, 2017 edition as TopoJSON."). The Census Bureau's own terms for these files are not stated in the package and are not verified here.
+Map tiles (requested by the browser only at zoom 6 and above; not bundled; terms not verified here):
+- CARTO dark basemap, basemaps.cartocdn.com. Attribution: "© OpenStreetMap contributors © CARTO". Terms: https://carto.com/attributions
+- OpenStreetMap data inside those tiles (ODbL). Attribution: "© OpenStreetMap contributors". Terms: https://www.openstreetmap.org/copyright
+- USGS imagery, USGSImageryOnly, basemap.nationalmap.gov. Attribution: "Imagery: USGS". Terms: https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits
 
 ----------------------------------------------------------------------
 Name: react

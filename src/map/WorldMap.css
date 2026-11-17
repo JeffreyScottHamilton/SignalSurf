@@ -98,6 +98,12 @@
   cursor: default;
 }
 
+/* The satellite toggle while satellite imagery is showing. */
+.ss-map__zoom-btn[aria-pressed='true'] {
+  color: var(--ss-accent-text);
+  border-color: var(--ss-accent);
+}
+
 /* Station markers. The outer box is a 24px hit area; the dot is centred with transparent padding. */
 .ss-marker {
   display: block;

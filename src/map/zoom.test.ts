@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { minZoomFor, panBoxFor, stateWeightFor, US_CENTRE_LNG, US_EAST, US_WEST } from './zoom';
+import {
+  detailShown,
+  mapMaxZoomFor,
+  minZoomFor,
+  panBoxFor,
+  stateWeightFor,
+  tilesUnavailable,
+  US_CENTRE_LNG,
+  US_EAST,
+  US_WEST,
+} from './zoom';
 
 // Degrees of longitude per pixel at zoom z on a 256px world: 2^z * 256 / 360 pixels per degree.
 const pxPerDegree = (zoom: number) => (2 ** zoom * 256) / 360;
@@ -89,3 +99,29 @@ describe('panBoxFor', () => {
     expect(panBoxFor(0, 0, 3, centre, base)).toEqual(base);
   });
 });
+
+describe('detailShown', () => {
+  it('starts at zoom 6: below it the US is the vector fill and no tiles are requested', () => {
+    expect(detailShown(5.9)).toBe(false);
+    expect(detailShown(3)).toBe(false);
+    expect(detailShown(6)).toBe(true);
+    expect(detailShown(9)).toBe(true);
+  });
+});
+
+describe('mapMaxZoomFor', () => {
+  it('caps the street map at 15 and the satellite at its native 16 plus one', () => {
+    expect(mapMaxZoomFor('streets')).toBe(15);
+    expect(mapMaxZoomFor('satellite')).toBe(17);
+  });
+});
+
+describe('tilesUnavailable', () => {
+  it('is true only after several errors with not one successful load', () => {
+    expect(tilesUnavailable({ loads: 0, errors: 0 })).toBe(false);
+    expect(tilesUnavailable({ loads: 0, errors: 3 })).toBe(false);
+    expect(tilesUnavailable({ loads: 0, errors: 4 })).toBe(true);
+    expect(tilesUnavailable({ loads: 1, errors: 40 })).toBe(false);
+  });
+});
+
