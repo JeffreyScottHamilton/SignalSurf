@@ -147,6 +147,52 @@ KSFI keeps the directory uuid and its click count. Before the correction it had 
 
 Limits: the stream was checked once, on 2026-11-18. The app does not re-check curated streams. The map and About panel credit Radio Browser for the station data; a curated station is not from Radio Browser, and the credit does not say so yet.
 
+## Discovered stations
+
+Licensed US music stations that Radio Browser does not list, and that have an official Triton (StreamTheWorld) livestream. They are found by `npm run discover` (`scripts/discover-streams.mjs`, needs network), written to `data/discovered-stations.json` (committed), and merged by `npm run catalog` after the curated stations. The catalogue build never fetches; it reads the committed file, and a missing file is an error.
+
+### How a station is found
+
+1. **Candidates.** FCC full-power FM and AM licences (`data/fcc-stations.json`) in the 50 states and DC that the catalogue does not already match, by call sign, or by frequency and place (the matcher in `scripts/fcc-gap.mjs`). LPFM and the territories are out of scope.
+2. **Skipped networks.** Single-feed networks whose stations all carry one network programme, so each would add a duplicate stream: K-LOVE (Educational Media Foundation), Air1 (Hope Media Group), Moody Radio, Bible Broadcasting Network, American Family Association, Relevant Radio, Family Life Ministries, and iHeartMedia (IHM Licenses; its streams are reached only through iHeart's own app API). The run prints the count per network.
+3. **Wikipedia format.** The station's article is read through the MediaWiki API, in batches of 50 titles, one request every 2 s, with a 60 s back-off and up to three retries on HTTP 429 or maxlag. The title tried first is the call sign; if that is not the station's page, CALL-FM (FM) or CALL (AM) is tried. A station is kept only when the page:
+   - is for this call sign (a redirect to another station's page, such as KUTX-FM to KUT, is refused);
+   - is not a disambiguation page;
+   - has a radio station infobox whose frequency matches the licence (FM within 0.05 MHz, AM within 0.5 kHz) when it gives one;
+   - has a city or state that agrees with the licence (a state named in the text must be the licence's state; a bare city must be the licence's city);
+   - has a format whose tags name a music genre under the catalogue's rules. A genre guessed from the station name does not count: a "College radio" station called "The Edge" is not kept.
+4. **Triton mount.** The mounts tried in order are `CALL+BAND+AAC`, `CALL+BAND`, `CALL+AAC`, `CALL`, at most four requests, 250 ms apart. The first mount that answers with XML status 200 and names that exact mount is used. (A miss is HTTP 200 with a 404 status inside the XML.) The codec in the XML sets the file extension: `aac`, `heaacv1` and `heaacv2` give `aac`; `mp3` gives `mp3`. A mount named `...AAC` whose codec is `mp3` is not kept. Stream URL: `https://playerservices.streamtheworld.com/api/livestream-redirect/<MOUNT>.<ext>`.
+5. **Entry.** `id` is `fcc:<facility id>`; `name` is the call sign, the frequency and the branding (`KUBL 93.3 The Bull`); `homepage` is the Wikipedia website when it is one plain https link (a bracketed link or a `{{URL}}` template is read; anything else is left empty); `lat`/`lng` are the FCC transmitter; `tags` are the format tags; `wikiTitle`, `tritonMount`, `codec`, `source` and `verified` (the run date) say where each fact came from.
+
+The cache (`--cache`, default a temp directory) holds one file per Wikipedia title and per Triton mount. A re-run, or a re-run after a stop, repeats no request that was already answered. A `--limit <n>` run does not write the committed file.
+
+### How it is merged (`src/catalog/discovered.mjs`)
+
+Discovered entries are merged after the directory and curated stations, through the same `normalizeRaw` rules (https stream, US box, state, music tags). Directory and curated stations win:
+
+- an entry is skipped when its stream is already listed (cleaned URL, http or https, from the Radio Browser rows or from the stations kept so far);
+- an entry is skipped when a directory or curated station has the same call sign and the same state (`sameCallStation`). An FM and an AM with the same letters are two stations: the frequency named in the station name must agree.
+
+The file is validated on every build: a bad entry, a repeated id or a repeated stream URL fails the build and names the entry.
+
+### FCC coordinates for directory stations (`scripts/fcc-coords.mjs`)
+
+The build also fills the FCC transmitter point for directory stations that have none. A station gets it only when exactly one FCC licence in its state matches by call sign (in the name or the homepage host) and no other frequency is named in the name. Two matches (for example KSL FM and KSL AM, with no frequency in the name) leave the station without coordinates. Directory coordinates are never changed; curated and discovered stations are not changed by this step. The coordinate source is recorded in the discovered entries (`coordsSource: "FCC transmitter"`).
+
+### Limits
+
+- The audio is not fetched. A Triton mount that answers 200 is trusted as the station's live stream. Nothing here plays the stream; check a few by hand before relying on them.
+- Wikipedia is a secondary source and can be stale, missing, or for another station. A station with no usable article is not kept, so coverage is partial by design.
+- A Triton mount named for a call sign can belong to a different station with the same letters. The call sign, frequency and place checks reduce that risk; they do not remove it.
+- The FCC point is the licensed transmitter site, not the city. For a station on a tower outside its city, the map point is at the tower.
+- Triton's terms for third-party players are not verified (see `docs/licenses.md`).
+- Wikipedia text is CC BY-SA 4.0. The entries carry the article title, but the app does not yet show that attribution (see `docs/licenses.md`, Open items).
+
+### Run status
+
+The first committed run is not done yet. The Wikipedia pass was stopped by HTTP 429 (rate limit) from the shared network address: the same address was refused for more than 40 minutes over four restarts, including by curl. About 880 Wikipedia titles are cached from the completed batches. Until `data/discovered-stations.json` is committed, `npm run catalog` stops with a clear error (a missing discovered file is an error by design), and `public/catalog.json` is unchanged. Counts (candidates, kept, Triton hits, coordinates filled, catalogue total) will be written here when the run completes.
+The build wiring (the discovered merge and the FCC fill in `scripts/build-catalog.mjs`) is not committed yet: it needs the discovered file, and `src/catalog/curated-build.test.mjs` would need a `--discovered` argument for its temporary inputs.
+
 ## HTTP streams on HTTPS hosts
 
 The directory marks many stations as HTTP only, even when the same server also serves other stations over HTTPS. Examples in the 2026-11-18 data: `stream.revma.ihrhls.com` (88 https stations), `streaming.live365.com` (48), `stream.radioparadise.com` (39), `listen.181fm.com` (37).

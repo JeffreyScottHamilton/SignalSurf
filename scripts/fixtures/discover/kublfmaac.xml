@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>        
+<live_stream_config version="1.10" xmlns="http://provisioning.streamtheworld.com/player/livestream-1.10">
+    <mountpoints>
+                                                        <mountpoint  >
+                        <status>
+                            <status-code>200</status-code>
+                            <status-message>OK</status-message>
+                        </status>
+                        
+                                                    <transports>
+                                                                                                            <transport>http</transport>
+                                                                                                                                                <transport mountSuffix="/HLS/playlist.m3u8">hls</transport>
+                                                                                                                                </transports>
+                                                
+                        <metadata>
+                            <shoutcast-v1 enabled="true" mountSuffix="_SC"/>
+                            <shoutcast-v2 enabled="false" mountSuffix="_SC"/>
+                            <sse-sideband enabled="true" streamSuffix="_SC" metadataSuffix="_SBM" />
+                        </metadata>  
+                        
+                                                    <servers>
+                                                                    <server sid="24153">
+                                                                                <ip>24153.live.streamtheworld.com</ip>
+                                                                                <ports>
+                                                                                            <port type="https">443</port>
+                                                                                    </ports>
+                                    </server>
+                                                                    <server sid="27163">
+                                                                                <ip>27163.live.streamtheworld.com</ip>
+                                                                                <ports>
+                                                                                            <port type="https">443</port>
+                                                                                    </ports>
+                                    </server>
+                                                                    <server sid="14933">
+                                                                                <ip>14933.live.streamtheworld.com</ip>
+                                                                                <ports>
+                                                                                            <port type="https">443</port>
+                                                                                    </ports>
+                                    </server>
+                                                            </servers>
+                                                
+                            <metrics>
+                                <listener-tracking url="" wcm-station-id="2971" />
+                                <tag name="uuid"/>
+                            </metrics>  
+
+                        <mount>KUBLFMAAC</mount>
+                                                   <format>FLV</format>
+                                            
+                        <bitrate>48000</bitrate>
+                        
+                                                    <media-format container="flv" cuepoints="stwcue" trackScheme="audio">
+                                                                    <audio index="0" samplerate="44100" codec="heaacv2" bitrate="48000" channels="2" />
+                                                                                            </media-format>
+                                                
+                        <authentication>0</authentication>
+                        <timeout>0</timeout>
+                        <send-page-url>1</send-page-url>
+                           
+                                            </mountpoint>
+                                        </mountpoints>
+</live_stream_config>

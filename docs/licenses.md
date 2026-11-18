@@ -5,6 +5,9 @@ Checked 2026-11-17 against `node_modules/<pkg>/package.json` (`license` field) a
 | Package | Version | Licence | What we use it for | Attribution shown where |
 |---|---|---|---|---|
 | Radio Browser (station data, not an npm package) | n/a | Public domain (see below) | Station names, streams, tags, coordinates, favicons, in the prebuilt catalogue | Map attribution "Stations: Radio Browser" (`src/map/mapController.tsx`); About panel (`src/components/settings/SettingsDialog.tsx`) |
+| FCC licence database (station coordinates, call signs, facility ids; `data/fcc-stations.json`) | n/a | US government work, public domain (FCC public data) | Discovered stations: the licence, the call sign, and the transmitter coordinates; the coordinate fill for directory stations (`scripts/fcc-coords.mjs`) | None in the UI yet (see Open items) |
+| Wikipedia station articles (format, branding, website, city, frequency; `data/discovered-stations.json`) | n/a | CC BY-SA 4.0 (text) | Facts only, read from the infobox at build time and recorded per station with its article title | None in the UI yet (see Open items) |
+| Triton (StreamTheWorld) livestream redirects (official mounts; not copies of audio) | n/a | Terms of use not verified | Stream links for discovered stations, played through Triton's redirect | None in the UI; notice in `public/THIRD-PARTY-NOTICES.txt` |
 | us-atlas | 3.0.1 | ISC (`LICENSE`: "Copyright 2013-2019 Michael Bostock") | US state outlines, `states-10m.json`: map layer (`src/map/landData.ts`, own chunk, dynamic import) and state polygons in the catalogue build (`scripts/build-catalog.mjs`) | Map attribution "Map: US Census Bureau"; About panel "US Census Bureau" |
 | leaflet | 1.9.4 | BSD-2-Clause (`LICENSE`: "Copyright (c) 2010-2023, Volodymyr Agafonkin") | Map rendering, markers, popups (`src/map/mapController.tsx`) | None in the UI. The Leaflet attribution prefix is turned off (`setPrefix(false)`). |
 | leaflet.markercluster | 1.5.3 | MIT (`MIT-LICENCE.txt`) | Clustering of station markers | None in the UI |
@@ -38,9 +41,17 @@ Loaded by the browser only at zoom 6 and above (`src/map/tileLayers.ts`). The te
 | USGS `USGSTopo` map (streets) | `basemap.nationalmap.gov` | "Map: USGS The National Map" (short form on phones: "Map: USGS") | https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits |
 | USGS `USGSImageryOnly` (satellite) | `basemap.nationalmap.gov` | "Imagery: USGS" | https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits |
 
+## Discovered stations: FCC, Wikipedia and Triton
+
+- FCC: the licence rows come from `transition.fcc.gov` (`fmq` and `amq` lists), which are FCC public data; see `docs/coverage.md`.
+- Wikipedia: the MediaWiki API (`en.wikipedia.org/w/api.php`) returns the article text. Only the radio station infobox parameters are read, as short facts (format, branding, website, city, frequency). Each entry names its article in `wikiTitle`. The text is under CC BY-SA 4.0, which asks for attribution to the article and a link; the entry's `source` field carries both. The app does not yet show that attribution (see Open items).
+- Triton: each stream is `playerservices.streamtheworld.com/api/livestream-redirect/<MOUNT>.<ext>` for a mount that Triton's livestream record names for the station's call sign. The audio is not copied and not stored. Triton's terms of use for third-party players were not checked from this sandbox.
+
 ## Notices and open items
 
 - The notices for every bundled package are in `public/THIRD-PARTY-NOTICES.txt`, which ships with the app (`dist/THIRD-PARTY-NOTICES.txt`).
 - Station logos and streams are loaded from third-party hosts. The app does not host or license them.
 - Open: the us-atlas terms above are not verified against the publisher. Re-check before a public release.
 - Open: the USGS tile terms in the table above are not verified from this sandbox. Re-check before a public release.
+- Open: the Wikipedia (CC BY-SA 4.0) attribution for discovered stations is not yet in the UI. It needs the map attribution and the About panel to name Wikipedia, which is outside the discovery change's ownership. Re-check before a release.
+- Open: the Triton terms for stream links are not verified. Re-check before a release.

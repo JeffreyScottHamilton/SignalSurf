@@ -2,6 +2,7 @@ Roadtrip Radio third-party notices
 ========================================
 
 Station data: Radio Browser (https://www.radio-browser.info/), released to the public domain by its operator.
+Discovered stations (data/discovered-stations.json, found by npm run discover): licence facts from the FCC licence database (US government work, public domain). Format, branding, website, city and frequency facts from English Wikipedia station articles, text under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/); each entry names its article in wikiTitle and its source. Stream links are Triton (StreamTheWorld) livestream-redirect URLs for each station's official mount, played from Triton; the audio is not copied. Triton's terms of use are not verified here.
 Map shapes: US state outlines from the US Census Bureau via the us-atlas package (ISC; the package README says: "This repository provides a convenient redistribution of the Census Bureau’s cartographic boundary shapefiles, 2017 edition as TopoJSON."). The Census Bureau's own terms for these files are not stated in the package and are not verified here.
 Map tiles (requested by the browser only at zoom 6 and above; not bundled; terms not verified here):
 - USGS topo map, USGSTopo, basemap.nationalmap.gov. Attribution: "Map: USGS The National Map". Terms: https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits

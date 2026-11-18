@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "e2e": "node e2e/smoke.mjs",
     "e2e:live": "node e2e/live-playback.mjs",
+    "discover": "node --use-env-proxy scripts/discover-streams.mjs",
     "catalog": "node --use-env-proxy scripts/build-catalog.mjs",
     "coverage": "node --use-env-proxy scripts/fcc-gap.mjs"
   },
