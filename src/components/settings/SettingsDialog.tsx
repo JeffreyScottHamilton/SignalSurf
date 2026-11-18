@@ -135,8 +135,8 @@ export function SettingsDialog() {
               <div className="ss-about__body">
                 <p>
                   {BRAND.name} is a free map of US music stations you can play in the browser. Station data comes from
-                  the community-run Radio Browser directory, filtered to US music stations (a few list no genre and are marked "Genre not listed"); streams play directly from
-                  each broadcaster. Stations without a known location are in the list only.
+                  the community-run Radio Browser directory, filtered to US music stations (a few list no genre and are marked "Genre not listed"), plus a few hand-checked official station streams.
+                  Streams play directly from each broadcaster. Stations without a known location are in the list only.
                 </p>
                 {catalogUpdated !== null && <p>Catalogue updated {catalogUpdated}</p>}
                 <p>
@@ -144,7 +144,7 @@ export function SettingsDialog() {
                   <a href="https://www.radio-browser.info/" target="_blank" rel="noopener noreferrer">
                     Radio Browser
                   </a>
-                  {' · Map: '}
+                  {', plus a few hand-checked official station streams · Map: '}
                   <a href="https://www.census.gov/" target="_blank" rel="noopener noreferrer">
                     US Census Bureau
                   </a>

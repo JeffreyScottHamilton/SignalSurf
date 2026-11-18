@@ -159,6 +159,13 @@ describe('player controller', () => {
     expect(reportClick).toHaveBeenCalledWith('a');
   });
 
+  it('a curated station plays without a directory click report', () => {
+    player.play(station('curated:kbzn'));
+    el().emit('playing');
+    expect(status()).toBe('playing');
+    expect(reportClick).not.toHaveBeenCalled();
+  });
+
   it('keeps exactly one audio element and unloads the first stream before the second', () => {
     player.play(station('a'));
     const first = el();

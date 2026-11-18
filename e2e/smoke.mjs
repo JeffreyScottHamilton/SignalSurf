@@ -886,7 +886,7 @@ async function main() {
       const shown = await page.locator('.leaflet-control-attribution').innerText();
       const wide = (page.viewportSize()?.width ?? 1440) >= 768;
       const want = wide
-        ? 'Stations: Radio Browser · Map: US Census Bureau, USGS The National Map'
+        ? 'Stations: Radio Browser, plus a few hand-checked official station streams · Map: US Census Bureau, USGS The National Map'
         : 'Radio Browser · US Census Bureau, USGS';
       expect(shown.includes(want), `street credit wrong (want "${want}"): ${shown}`);
       expect(!shown.includes('Map: USGS') && !shown.includes('Map: US Census Bureau, Map:'), `duplicated "Map:" in credit: ${shown}`);

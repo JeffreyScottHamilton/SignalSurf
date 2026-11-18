@@ -65,7 +65,7 @@ The earlier app wrote `signalsurf:favorites:v1`, `signalsurf:history:v1` and `si
 - Below zoom 6 the map draws only the US: the state outlines from `us-atlas/states-10m.json` (`src/map/landData.ts`), a separate chunk loaded with a dynamic import. Everything outside them is the ocean colour. The world-atlas land layer was removed. From zoom 6 the imagery section below applies.
 - The map opens fitted to the lower 48 (`LOWER_48` in `mapController.tsx`). Pan bounds are `[14,-190]` to `[74,-60]` (`PAN_BASE`), so Alaska (the Aleutians reach -188), Hawaii and Puerto Rico are reachable and nothing else. The minimum zoom shows the whole US, centred.
 - The state borders get wider as the map zooms (`stateWeightFor` in `src/map/zoom.ts`): a hairline at the start view, at least about 1px from zoom 6.
-- Attribution: "Stations: Radio Browser · Map: US Census Bureau", with the street credit after it ("Stations: Radio Browser · Map: US Census Bureau, USGS The National Map"; phones show "Radio Browser · US Census Bureau, USGS").
+- Attribution: "Stations: Radio Browser, plus a few hand-checked official station streams · Map: US Census Bureau", with the street credit after it ("... Map: US Census Bureau, USGS The National Map"; phones show "Radio Browser · US Census Bureau, USGS"). The note covers the curated stations (`data/curated-stations.json`), which are not from Radio Browser.
 - The minimum zoom is a whole number (`minZoomFor` in `src/map/zoom.ts`), rounded down so the whole US (from -188 to -64) fits the panel width. Reason: markercluster walks its grid from `minZoom - 1` but builds its top level at `floor(minZoom) - 1`. With a fractional minimum, stations that never cluster were dropped from the map; the grids are also rebuilt whenever the whole minimum changes.
 
 ## Map imagery: tiles from zoom 6, with a fallback
@@ -83,7 +83,7 @@ From zoom 6 a non-interactive mask dims land outside the US (a world rectangle w
 
 The marker clusters are rebuilt when the zoom range changes, because markercluster reads the map's minimum and maximum zoom only once, when the group is added.
 
-Attribution: the base credit is "Stations: Radio Browser · Map: US Census Bureau". The active tile credit follows it, separated by a comma (Leaflet's join): "USGS The National Map" for streets, or "Imagery: USGS" for satellite. So the streets line reads "Stations: Radio Browser · Map: US Census Bureau, USGS The National Map". On phones the short forms are used ("Radio Browser · US Census Bureau, USGS"), and the credit stays on screen.
+Attribution: the base credit is "Stations: Radio Browser, plus a few hand-checked official station streams · Map: US Census Bureau". The active tile credit follows it, separated by a comma (Leaflet's join): "USGS The National Map" for streets, or "Imagery: USGS" for satellite. So the streets line reads "Stations: Radio Browser, plus a few hand-checked official station streams · Map: US Census Bureau, USGS The National Map". On phones the short forms are used ("Radio Browser · US Census Bureau, USGS"), and the credit stays on screen.
 
 ## Search and the list are local
 

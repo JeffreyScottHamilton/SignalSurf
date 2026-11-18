@@ -36,7 +36,7 @@ export interface MapController {
 
 // Phones get the short form (CSS picks one under 768px); both are one line.
 const ATTRIBUTION =
-  '<span class="ss-attr--long">Stations: Radio Browser · Map: US Census Bureau</span>' +
+  '<span class="ss-attr--long">Stations: Radio Browser, plus a few hand-checked official station streams · Map: US Census Bureau</span>' +
   '<span class="ss-attr--short">Radio Browser · US Census Bureau</span>';
 // Bounds the pan to the US: the lower 48, Alaska (the Aleutians reach -188), Hawaii and Puerto Rico, with a margin.
 // Widened by panBounds() when a panel's view is larger than this box, so the whole US can be shown at the minimum zoom.
