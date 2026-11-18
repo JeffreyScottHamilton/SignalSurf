@@ -33,7 +33,7 @@ A station whose tags are only generic music words (`music`, `variety`, `eclectic
 
 ## Untagged US stations are kept as uncategorized
 
-A US station with an HTTPS stream and no tags at all is kept with `genres: []` and the flag `uncategorized: true` (short key `y` in the file). It appears under All and in search only, and the list and map show "Genre not listed". It is not filtered by any genre chip. Reason: a large group of US stations had no evidence either way, and leaving them all out removed them without a check. Whether they are music is not known; the directory gives no content for them. Keeping them under All and in search, with a visible "Genre not listed", lets the user decide. In the 2026-11-18 query, 1,436 US https stations had no tags: 213 kept a genre from their name, 58 were dropped by the name check, and 1,165 became uncategorized (1,157 after dedupe).
+A US station with an HTTPS stream (or an http stream on a host that serves HTTPS, see the HTTP upgrade section) and no tags at all is kept with `genres: []` and the flag `uncategorized: true` (short key `y` in the file). It appears under All and in search only, and the list and map show "Genre not listed". It is not filtered by any genre chip. Reason: a large group of US stations had no evidence either way, and leaving them all out removed them without a check. Whether they are music is not known; the directory gives no content for them. Keeping them under All and in search, with a visible "Genre not listed", lets the user decide. In the 2026-11-18 query, 1,436 US https stations had no tags: 213 kept a genre from their name, 58 were dropped by the name check, and 1,165 became uncategorized (1,157 after dedupe). In the 2026-11-18 build with the HTTP upgrade, 1,253 stations are uncategorized.
 
 The cost is that some are not music. The directory gives no content for them, so talk, local, religious or spoken-word programming can be in this group. To limit that, an untagged station is still dropped when its name holds a whole word from this list: news, talk, sports, sport, scanner, police, fire, sheriff, ems, dispatch, weather, traffic, sermon(s), preaching, teaching, bible, church, ministry, ministries, podcast, comedy, audiobook(s), npr news, and the hard-exclude and name guards above. A name that states a genre ("Classic Rock 101") still gets that genre and is not uncategorized. This rule is in `classifyDetailed` (`src/catalog/rules.mjs`), and the build summary prints the uncategorized count and the untagged drops (`excluded by name`). Dedupe is unchanged.
 
@@ -101,9 +101,13 @@ The player (`src/audio/player.ts`) owns one `HTMLAudioElement`. Every change of 
 
 `hls.js` is imported only for a station marked `hls` or whose stream path ends in `.m3u8` (`needsHls`, then `import('hls.js')` in `src/audio/player.ts`). Plain streams never download it.
 
-## HTTPS-only streams and favicons
+## HTTP streams are upgraded only on hosts that serve HTTPS
 
-A catalogue station is kept only when its stream is `https:` (`normalizeRaw`, `non-https` drop reason). Favicons must be `https:`; homepages may be `http:` or `https:`. Reason: the app is served over HTTPS, and a browser blocks `http:` streams as mixed content, so such a station could never play. The number dropped for this reason in the current build is 0, since the directory query already asks for HTTPS streams.
+The app is served over HTTPS, and a browser blocks `http:` audio on an HTTPS page (mixed content), so a catalogue stream must be `https:`. Before this change the directory query asked for HTTPS streams only (`is_https=true`), which hid many stations on servers that also serve HTTPS.
+
+Now the query has no `is_https` filter. An `http://` stream is written as `https://` only when its own host:port is the host:port of an https stream of some station in the same result (`httpsHostKeys`, `upgradeHttpUrl` in `src/catalog/rules.mjs`). Path and query are kept, and the port is never changed. A stream on any other host is dropped as `non-https`. A favicon gets the same rule and is omitted otherwise. Homepages are links and are not changed; they may be `http:` or `https:`.
+
+Reason: the host is evidence that the server does serve HTTPS. In the 2026-11-18 data, 561 stations (455 music, 106 uncategorized) were added this way. The rule is by host, not by test: some upgraded streams will fail, because the mount may not exist over HTTPS, or a CDN redirect may refuse. The app does not test them and does not mark them. A failing one shows the player's normal error and Try again. Trade-off accepted: more stations, with some that do not play, rather than a list that hides stations that do. Details and the spot-check: `docs/data-source.md`.
 
 ## Small custom store and plain CSS
 

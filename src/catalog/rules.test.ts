@@ -10,9 +10,11 @@ import {
   inUsBox,
   normalizeRaw,
   parseStateText,
+  httpsHostKeys,
   parseTags,
   stateAtPoint,
   stateFromIso,
+  upgradeHttpUrl,
 } from './rules.mjs';
 
 function raw(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -498,5 +500,93 @@ describe('expandCatalogRecord', () => {
   it('uses distinct short keys', () => {
     const shorts = Object.values(CATALOG_KEYS);
     expect(new Set(shorts).size).toBe(shorts.length);
+  });
+});
+
+describe('httpsHostKeys', () => {
+  it('collects host:port of https streams, with url_resolved first and the default port omitted', () => {
+    const keys = httpsHostKeys([
+      raw({ url_resolved: 'https://Stream.Test/a', url: 'http://other.test/x' }),
+      raw({ url_resolved: '', url: 'https://fallback.test:8443/b' }),
+      raw({ url_resolved: 'https://port.test:443/c' }),
+      raw({ url_resolved: 'http://http-only.test/d' }),
+      raw({ url_resolved: 'not a url' }),
+      null,
+    ]);
+    expect([...keys].sort()).toEqual(['fallback.test:8443', 'port.test', 'stream.test']);
+  });
+});
+
+describe('upgradeHttpUrl', () => {
+  const keys = new Set(['stream.revma.ihrhls.com', 'live.test:8000']);
+
+  it('upgrades an http URL on a known host, keeping path and query', () => {
+    expect(upgradeHttpUrl('http://stream.revma.ihrhls.com/rev/aac?x=1&y=/z', keys)).toBe(
+      'https://stream.revma.ihrhls.com/rev/aac?x=1&y=/z',
+    );
+    expect(upgradeHttpUrl('  HTTP://stream.revma.ihrhls.com/', keys)).toBe('https://stream.revma.ihrhls.com/');
+  });
+
+  it('refuses a host that serves no https stream', () => {
+    expect(upgradeHttpUrl('http://unknown.test/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('http://stream.revma.ihrhls.com.evil.test/a', keys)).toBeNull();
+  });
+
+  it('refuses a port mismatch and never changes a port', () => {
+    expect(upgradeHttpUrl('http://live.test/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('http://live.test:8001/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('http://stream.revma.ihrhls.com:8000/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('http://live.test:443/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('http://live.test:8000/a', keys)).toBe('https://live.test:8000/a');
+  });
+
+  it('leaves https URLs, junk and non-http schemes alone', () => {
+    expect(upgradeHttpUrl('https://stream.revma.ihrhls.com/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('ftp://stream.revma.ihrhls.com/a', keys)).toBeNull();
+    expect(upgradeHttpUrl('http://', keys)).toBeNull();
+    expect(upgradeHttpUrl(undefined, keys)).toBeNull();
+    expect(upgradeHttpUrl('http://stream.revma.ihrhls.com/a', null)).toBeNull();
+  });
+});
+
+describe('normalizeRaw with https hosts', () => {
+  const keys = new Set(['stream.test', 'ktst.test']);
+
+  it('keeps an http stream on a known https host as https, and reports it', () => {
+    const r = normalizeRaw(raw({ url_resolved: 'http://stream.test/a?b=1', url: '' }), polygonNone, keys);
+    expect(r.reason).toBeNull();
+    if (r.reason === null) {
+      expect(r.station.streamUrl).toBe('https://stream.test/a?b=1');
+      expect(r.upgraded).toEqual({ stream: true, favicon: false });
+    }
+  });
+
+  it('drops an http stream whose host is not in the set, as before', () => {
+    expect(normalizeRaw(raw({ url_resolved: 'http://other.test/a' }), polygonNone, keys)).toEqual({ reason: 'non-https' });
+  });
+
+  it('without a host set, an http stream is still dropped', () => {
+    expect(normalizeRaw(raw({ url_resolved: 'http://stream.test/a' }), polygonNone)).toEqual({ reason: 'non-https' });
+  });
+
+  it('upgrades an http favicon on a known host, and omits it otherwise', () => {
+    const up = normalizeRaw(raw({ favicon: 'http://ktst.test/i.png' }), polygonNone, keys);
+    if (up.reason === null) {
+      expect(up.station.favicon).toBe('https://ktst.test/i.png');
+      expect(up.upgraded.favicon).toBe(true);
+    }
+    const no = normalizeRaw(raw({ favicon: 'http://other.test/i.png' }), polygonNone, keys);
+    if (no.reason === null) {
+      expect(no.station.favicon).toBeNull();
+      expect(no.upgraded.favicon).toBe(false);
+    }
+  });
+
+  it('does not touch an https stream or homepage', () => {
+    const r = normalizeRaw(raw({ homepage: 'http://other.test/' }), polygonNone, keys);
+    if (r.reason === null) {
+      expect(r.station.homepage).toBe('http://other.test/');
+      expect(r.upgraded).toEqual({ stream: false, favicon: false });
+    }
   });
 });

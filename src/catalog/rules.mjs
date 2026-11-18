@@ -355,19 +355,27 @@ export function stateAtPoint(lng, lat, shapes) {
  * Normalises one raw Radio Browser record into the compact catalogue record, or returns
  * { reason } when it is dropped. Rules mirror the former src/api/normalize.ts:
  * uuid and name required, https stream (url_resolved, else url), https favicon,
- * http(s) homepage. Coordinates: both finite, in range, not (0,0), inside a US box, else
- * dropped (never moved). stateCode: iso, then state text, then polygon, else null.
+ * http(s) homepage. httpsKeys (httpsHostKeys) enables the http-to-https upgrade of stream and
+ * favicon. Coordinates: both finite, in range, not (0,0), inside a US box, else dropped (never moved). stateCode: iso, then state text, then polygon, else null.
  * polygonState(lng, lat) supplies the shape lookup (may return null).
  * Returns { station, reason, stateSource, coordsDropped }.
  */
-export function normalizeRaw(raw, polygonState) {
+export function normalizeRaw(raw, polygonState, httpsKeys = null) {
   const str = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
   if (!raw || typeof raw !== 'object') return { reason: 'junk' };
   const id = str(raw.stationuuid);
   const name = str(raw.name)?.replace(/\s+/g, ' ') ?? null;
   if (id === null || name === null) return { reason: 'junk' };
 
-  const streamText = str(raw.url_resolved) ?? str(raw.url);
+  let streamText = str(raw.url_resolved) ?? str(raw.url);
+  let streamUpgraded = false;
+  if (streamText !== null && httpsKeys !== null) {
+    const up = upgradeHttpUrl(streamText, httpsKeys);
+    if (up !== null) {
+      streamText = up;
+      streamUpgraded = true;
+    }
+  }
   const streamOk = streamText !== null && /^https:\/\//i.test(streamText) && isUrl(streamText);
   if (!streamOk) return { reason: 'non-https' };
 
@@ -377,7 +385,15 @@ export function normalizeRaw(raw, polygonState) {
 
   const home = str(raw.homepage);
   const homepage = home !== null && /^https?:\/\//i.test(home) && isUrl(home) ? home : null;
-  const fav = str(raw.favicon);
+  let fav = str(raw.favicon);
+  let faviconUpgraded = false;
+  if (fav !== null && httpsKeys !== null) {
+    const up = upgradeHttpUrl(fav, httpsKeys);
+    if (up !== null) {
+      fav = up;
+      faviconUpgraded = true;
+    }
+  }
   const favicon = fav !== null && /^https:\/\//i.test(fav) && isUrl(fav) ? fav : null;
 
   const iso = stateFromIso(raw.iso_3166_2);
@@ -431,7 +447,47 @@ export function normalizeRaw(raw, polygonState) {
     ...(cls.by === 'uncategorized' ? { uncategorized: true } : {}),
     clickCount: Math.max(0, finite(raw.clickcount) ?? 0),
   };
-  return { station, reason: null, by: cls.by, stateSource: stateSource ?? 'null', coordsDropped };
+  return {
+    station,
+    reason: null,
+    by: cls.by,
+    stateSource: stateSource ?? 'null',
+    coordsDropped,
+    upgraded: { stream: streamUpgraded, favicon: faviconUpgraded && favicon !== null },
+  };
+}
+
+/**
+ * The host:port keys (WHATWG URL.host, port shown only when it is not the https default) of every
+ * https stream in the raw records. Stream text is url_resolved, else url, as in normalizeRaw.
+ */
+export function httpsHostKeys(rawRows) {
+  const keys = new Set();
+  for (const row of rawRows) {
+    if (!row || typeof row !== 'object') continue;
+    const text = [row.url_resolved, row.url]
+      .map((v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null))
+      .find((v) => v !== null);
+    if (text === undefined || text === null) continue;
+    if (!/^https:\/\//i.test(text) || !isUrl(text)) continue;
+    keys.add(new URL(text).host);
+  }
+  return keys;
+}
+
+/**
+ * Upgrades an http:// URL to https:// when its host (with any explicit port) also serves https
+ * in the directory (httpsKeys from httpsHostKeys). Path, query and fragment are kept as they are.
+ * The port is never changed: http://host:8000 is upgraded only when host:8000 is an https host, and
+ * http://host (default port) only when host is. Returns the https URL, or null when the URL is not
+ * http, does not parse, or its host:port is not in httpsKeys.
+ */
+export function upgradeHttpUrl(url, httpsKeys) {
+  if (typeof url !== 'string' || !(httpsKeys instanceof Set)) return null;
+  const t = url.trim();
+  if (!/^http:\/\//i.test(t) || !isUrl(t)) return null;
+  if (!httpsKeys.has(new URL(t).host)) return null;
+  return `https://${t.slice('http://'.length)}`;
 }
 
 function finite(v) {

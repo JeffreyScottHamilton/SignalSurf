@@ -41,8 +41,10 @@ export interface CatalogRecord {
 }
 export type NormalizeResult =
   | { reason: DropReason }
-  | { station: CatalogRecord; reason: null; by: 'tags' | 'name' | 'uncategorized' | null; stateSource: 'iso' | 'name' | 'polygon' | 'null'; coordsDropped: boolean };
-export declare function normalizeRaw(raw: unknown, polygonState?: ((lng: number, lat: number) => string | null) | null): NormalizeResult;
+  | { station: CatalogRecord; reason: null; by: 'tags' | 'name' | 'uncategorized' | null; stateSource: 'iso' | 'name' | 'polygon' | 'null'; coordsDropped: boolean; upgraded: { stream: boolean; favicon: boolean } };
+export declare function normalizeRaw(raw: unknown, polygonState?: ((lng: number, lat: number) => string | null) | null, httpsKeys?: ReadonlySet<string> | null): NormalizeResult;
+export declare function httpsHostKeys(rawRows: readonly unknown[]): Set<string>;
+export declare function upgradeHttpUrl(url: unknown, httpsKeys: ReadonlySet<string> | null): string | null;
 export declare function parseTags(v: unknown): string[];
 export declare function dedupeCatalog<T extends { id: string; streamUrl: string }>(list: T[]): T[];
 export declare const CATALOG_KEYS: Record<string, string>;

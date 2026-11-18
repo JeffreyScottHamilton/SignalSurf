@@ -6,8 +6,10 @@
 //   --raw  reuse a saved Radio Browser search response instead of fetching
 //   --out  output path (default public/catalog.json)
 //
-// Source: GET <server>/json/stations/search?countrycode=US&hidebroken=true&is_https=true
+// Source: GET <server>/json/stations/search?countrycode=US&hidebroken=true
 //         &limit=100000&order=clickcount&reverse=true ; server from /json/servers, fallback de1/de2/fi1.
+// The query has no is_https filter. An http:// stream (or favicon) is upgraded to https:// only when its
+// host:port also serves an https stream in the same data (httpsHostKeys / upgradeHttpUrl); otherwise it is dropped.
 // Rules (genres, excludes, state parsing, coordinates) live in src/catalog/rules.mjs and are shared
 // with the unit tests.
 //
@@ -30,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import {
   dedupeCatalog,
+  httpsHostKeys,
   normalizeRaw,
   stateAtPoint,
   STATE_BY_FIPS,
@@ -51,7 +54,7 @@ const outPath = resolve(root, argOf('--out') ?? 'public/catalog.json');
 
 const DISCOVERY = 'https://all.api.radio-browser.info/json/servers';
 const FALLBACK = ['de1', 'de2', 'fi1'].map((h) => `${h}.api.radio-browser.info`);
-const SEARCH_QS = 'countrycode=US&hidebroken=true&is_https=true&limit=100000&order=clickcount&reverse=true';
+const SEARCH_QS = 'countrycode=US&hidebroken=true&limit=100000&order=clickcount&reverse=true';
 const HOST_RE = /^[a-z0-9-]+\.api\.radio-browser\.info$/;
 
 /** GET JSON through Node fetch (honours --use-env-proxy); falls back to curl when fetch cannot connect. */
@@ -131,14 +134,16 @@ async function main() {
   const raw = await loadRaw();
   const shapes = loadStateShapes();
   const polygonState = (lng, lat) => stateAtPoint(lng, lat, shapes);
+  const httpsKeys = httpsHostKeys(raw);
 
   const drop = { junk: 0, 'non-https': 0, untagged: 0, 'hard-exclude': 0, 'no-genre': 0, duplicate: 0 };
   const sources = { iso: 0, name: 0, polygon: 0, null: 0 };
   let coordsDropped = 0;
   let byName = 0;
   const kept = [];
+  const upgradedIds = new Map(); // id -> { stream, favicon } for kept stations that were upgraded
   for (const row of raw) {
-    const r = normalizeRaw(row, polygonState);
+    const r = normalizeRaw(row, polygonState, httpsKeys);
     if (r.reason) {
       drop[r.reason] = (drop[r.reason] ?? 0) + 1;
       continue;
@@ -146,10 +151,23 @@ async function main() {
     sources[r.stateSource] += 1;
     if (r.by === 'name') byName += 1;
     if (r.coordsDropped) coordsDropped += 1;
+    if (r.upgraded.stream || r.upgraded.favicon) upgradedIds.set(r.station.id, r.upgraded);
     kept.push(r.station);
   }
   const unique = dedupeCatalog(kept);
   drop.duplicate = kept.length - unique.length;
+
+  // Upgrade counts over the stations that are in the file (after dedupe).
+  const up = { musicStreams: 0, uncategorizedStreams: 0, favicons: 0 };
+  for (const s of unique) {
+    const u = upgradedIds.get(s.id);
+    if (!u) continue;
+    if (u.stream) {
+      if (s.uncategorized === true) up.uncategorizedStreams += 1;
+      else up.musicStreams += 1;
+    }
+    if (u.favicon) up.favicons += 1;
+  }
 
   const stations = unique.sort((a, b) => b.clickCount - a.clickCount);
   const genreCounts = Object.fromEntries(GENRES.map((g) => [g, 0]));
@@ -179,7 +197,11 @@ async function main() {
   console.log(`raw ${raw.length}; kept ${kept_} (${pct(kept_, raw.length)}%)`);
   console.log(
     `dropped: untagged (no tags, name excluded) ${drop.untagged}, hard-exclude ${drop['hard-exclude']}, no-genre ${drop['no-genre']}, ` +
-      `non-https ${drop['non-https']}, duplicate ${drop.duplicate}, junk ${drop.junk}`,
+      `non-https (no https twin) ${drop['non-https']}, duplicate ${drop.duplicate}, junk ${drop.junk}`,
+  );
+  console.log(
+    `http upgraded to https (host:port also serves https; ${httpsKeys.size} https host keys): ` +
+      `streams in music ${up.musicStreams}, streams uncategorized ${up.uncategorizedStreams}, favicons ${up.favicons}`,
   );
   console.log(`genres (a station may count twice): ${GENRES.map((g) => `${g} ${genreCounts[g]}`).join(', ')}`);
   console.log(`admitted by name (no genre from tags): ${byName}`);
