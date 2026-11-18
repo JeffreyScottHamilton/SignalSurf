@@ -36,12 +36,18 @@ function rbRow(extra = {}) {
   };
 }
 
-function build(rows, curatedDoc) {
+/**
+ * Runs the build on a raw fixture. The discovered input is an empty stations file in the temp dir, so the result does not
+ * depend on the real data/discovered-stations.json. Pass discovered: 'missing' to point at a file that does not exist.
+ */
+function build(rows, curatedDoc, { discovered = { stations: [] } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'curated-build-'));
   const rawPath = join(dir, 'raw.json');
   const outPath = join(dir, 'catalog.json');
   writeFileSync(rawPath, JSON.stringify(rows));
-  const args = [BUILD, '--raw', rawPath, '--out', outPath];
+  const discoveredPath = join(dir, 'discovered.json');
+  if (discovered !== 'missing') writeFileSync(discoveredPath, JSON.stringify(discovered));
+  const args = [BUILD, '--raw', rawPath, '--out', outPath, '--discovered', discoveredPath];
   if (curatedDoc !== undefined) {
     const curatedPath = join(dir, 'curated.json');
     writeFileSync(curatedPath, JSON.stringify(curatedDoc));
@@ -170,6 +176,13 @@ describe('build-catalog with curated stations', () => {
     const { log, catalog } = build([rbRow()], curated);
     expect(catalog.stations.map((s) => s.i)).toEqual([rbRow().stationuuid, 'curated:fresh-one']);
     expect(log).toMatch(/added 1, skipped \(Radio Browser has the stream\) 1/);
+  });
+
+  it('a missing discovered file builds with 0 discovered and prints one stat line', () => {
+    const { log, catalog } = build([rbRow()], undefined, { discovered: 'missing' });
+    expect(log).toMatch(/^discovered: 0 \(file not present\)$/m);
+    expect(log).not.toMatch(/^discovered \(/m);
+    expect(catalog.count).toBe(3);
   });
 
   it('fails the build, naming the entry, when the curated file is invalid', () => {

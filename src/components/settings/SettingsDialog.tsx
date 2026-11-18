@@ -144,7 +144,11 @@ export function SettingsDialog() {
                   <a href="https://www.radio-browser.info/" target="_blank" rel="noopener noreferrer">
                     Radio Browser
                   </a>
-                  {', plus a few hand-checked official station streams · Map: '}
+                  {', plus a few hand-checked official station streams · Some locations: '}
+                  <a href="https://www.fcc.gov/" target="_blank" rel="noopener noreferrer">
+                    FCC
+                  </a>
+                  {' · Map: '}
                   <a href="https://www.census.gov/" target="_blank" rel="noopener noreferrer">
                     US Census Bureau
                   </a>

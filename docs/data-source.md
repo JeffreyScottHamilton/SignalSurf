@@ -10,7 +10,7 @@ API facts below were checked on 2026-11-13 with the commands or URLs shown. The 
    - `https://www.radio-browser.info/` (home page): "Data license: public domain, software license: GPL, server software: open source" and "Everyone is free to use the collected data (station names, tags, links to stream, links to homepages, language, country, state) in their works. I give all the rights I have at the accumulated data to the public domain."
    - `https://gitlab.com/radiobrowser/radio-database/-/raw/main/README.md` (`## License`): "All of the content of this repository is in the public domain."
    - The API server code is AGPL-3.0 (`https://gitlab.com/radiobrowser/radiobrowser-api-rust/-/raw/master/LICENSE`). That licence covers the server software, not the data, and the app does not include the server.
-2. **Attribution:** no page fetched requires credit. The app credits Radio Browser in the map attribution ("Stations: Radio Browser") and in the About panel anyway.
+2. **Attribution:** no page fetched requires credit. The app credits Radio Browser in the map attribution ("Stations: Radio Browser") and in the About panel anyway. Station locations filled from FCC data are credited as "Some locations: FCC" in both places (FCC data is public domain).
 3. **Credentials:** none. The build makes unauthenticated GET requests.
 
 ## What the build asks for
@@ -22,6 +22,32 @@ API facts below were checked on 2026-11-13 with the commands or URLs shown. The 
 - **User-Agent:** the build sends Node's default. The API docs ask clients for a descriptive `User-Agent` ("appname/appversion"). This is an open item: the build should send one. **Not done.**
 
 The API docs (`https://de1.api.radio-browser.info/`) say: "This webservice can be used freely but without guarantee to work." The directory is volunteer-run, so the catalogue is built by hand and committed, not fetched at runtime.
+
+## Catalogue build, 2026-11-18 (FCC coordinate fill)
+
+Command: `npm run catalog` (exit 0), after the FCC coordinate fill (`scripts/fcc-coords.mjs`) was added. The discovered merge is wired but there is no discovered file yet, so it adds nothing (`discovered: 0 (file not present)`; see "Discovered stations").
+
+| Measure | Before (committed file) | After |
+|---|---|---|
+| Stations in `public/catalog.json` | 4,416 | 4,420 |
+| Stations with coordinates | 1,304 | 1,873 |
+| Stations with FCC transmitter coordinates | 0 | 565 (9 ambiguous, left without) |
+| Utah (`UT`) stations | 30 (15 with coordinates) | 30 (24 with coordinates; 9 from FCC) |
+| Raw US records returned | not recorded | 7,014 |
+| `public/catalog.json` raw bytes | 1,243,323 | 1,258,826 (1,229 KiB) |
+| Gzip (Node zlib, level 6) | 415,685 | 423,961 |
+
+The directory changed between the two builds (new records, new click counts), so not every difference is from the FCC fill. Of the 569 stations that have coordinates now and did not before, 565 match an FCC licence point in their state; the other 4 are not matched to one.
+
+Spot-checks of three filled stations (call sign against the station name, state against the FCC licence):
+
+| Station (name, state) | Coordinates in the file | FCC licence |
+|---|---|---|
+| `95.5 The Pass - KNLT` (AK) | 61.6942, -149.2672 | KNLT FM 95.5, Palmer, AK |
+| `KPBS-HD2 Classical San Diego` (CA) | 32.8381, -117.25 | KPBS FM 89.5, San Diego, CA (the HD2 subchannel uses the KPBS transmitter) |
+| `KWAV 96.9` (CA) | 36.5347, -121.6216 | KWAV FM 96.9, Monterey, CA |
+
+Some FCC points are shared by several licences in one city (for example San Diego), so the point alone does not identify a station. The call sign in the name is what selects the licence.
 
 ## Catalogue build, 2026-11-18 (with the http upgrade)
 
@@ -149,7 +175,7 @@ Limits: the stream was checked once, on 2026-11-18. The app does not re-check cu
 
 ## Discovered stations
 
-Licensed US music stations that Radio Browser does not list, and that have an official Triton (StreamTheWorld) livestream. They are found by `npm run discover` (`scripts/discover-streams.mjs`, needs network), written to `data/discovered-stations.json` (committed), and merged by `npm run catalog` after the curated stations. The catalogue build never fetches; it reads the committed file, and a missing file is an error.
+Licensed US music stations that Radio Browser does not list, and that have an official Triton (StreamTheWorld) livestream. They are found by `npm run discover` (`scripts/discover-streams.mjs`, needs network), written to `data/discovered-stations.json` (committed), and merged by `npm run catalog` after the curated stations. The catalogue build never fetches; it reads the committed file. A missing file counts as no discovered stations (the build does not fail).
 
 ### How a station is found
 
@@ -190,8 +216,9 @@ The build also fills the FCC transmitter point for directory stations that have 
 
 ### Run status
 
-The first committed run is not done yet. The Wikipedia pass was stopped by HTTP 429 (rate limit) from the shared network address: the same address was refused for more than 40 minutes over four restarts, including by curl. About 880 Wikipedia titles are cached from the completed batches. Until `data/discovered-stations.json` is committed, `npm run catalog` stops with a clear error (a missing discovered file is an error by design), and `public/catalog.json` is unchanged. Counts (candidates, kept, Triton hits, coordinates filled, catalogue total) will be written here when the run completes.
-The build wiring (the discovered merge and the FCC fill in `scripts/build-catalog.mjs`) is not committed yet: it needs the discovered file, and `src/catalog/curated-build.test.mjs` would need a `--discovered` argument for its temporary inputs.
+The discovery is wired but no discovered data has shipped yet. Wikipedia rate-limited this network address (HTTP 429): the same address was refused for more than 40 minutes over four restarts, including by curl. About 880 Wikipedia titles are cached from the completed batches. So `data/discovered-stations.json` has not been produced, and it is not committed.
+
+Until it exists, `npm run catalog` treats it as an empty list and prints `discovered: 0 (file not present)`. The build does not fail. The discovered merge adds nothing, and no Wikipedia data is in the catalogue or the credits. The build test (`src/catalog/curated-build.test.mjs`) passes `--discovered` an empty file in its temporary directory, so it does not depend on this file. Counts (candidates, kept, Triton hits, coordinates filled, catalogue total) will be written here when a run completes.
 
 ## HTTP streams on HTTPS hosts
 

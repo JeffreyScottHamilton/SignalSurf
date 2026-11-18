@@ -257,8 +257,8 @@ function attachListeners(el: HTMLAudioElement, t: number): void {
       startedToken = token;
       const station = store.get().station;
       if (station) {
-        // Curated stations (id "curated:...") are not in the Radio Browser directory, so there is no play to count.
-        if (!station.id.startsWith('curated:')) reportClick(station.id);
+        // Curated ("curated:...") and FCC-discovered ("fcc:...") stations are not in the Radio Browser directory, so there is no play to count.
+        if (!station.id.startsWith('curated:') && !station.id.startsWith('fcc:')) reportClick(station.id);
         for (const fn of [...startedListeners]) fn(station);
       }
     }

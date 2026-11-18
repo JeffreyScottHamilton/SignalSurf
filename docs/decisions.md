@@ -157,3 +157,9 @@ The rules are strict on purpose. The genre must come from the Wikipedia format, 
 ## FCC transmitter points fill only unambiguous directory matches
 
 A directory station with no coordinates gets the FCC transmitter point when exactly one FCC licence in its state has its call sign in the station's name or homepage host, and no other frequency is named. Otherwise it keeps no coordinates. Reason: a wrong point on the map is worse than no point, and the FCC transmitter is the licensed site, which is the best public point for a station. Directory coordinates always win. Details: `docs/data-source.md`, "FCC coordinates for directory stations".
+
+## A missing discovered file is an empty list, and FCC-found stations are not play-counted
+
+The Wikipedia pass that makes `data/discovered-stations.json` was rate-limited (HTTP 429) from this network address, so the file does not exist yet. `npm run catalog` reads it when present and treats a missing file as zero discovered stations, printing `discovered: 0 (file not present)`. Reason: the FCC coordinate fill ships now and must not wait for Wikipedia, and a fake or empty committed file would look like real data. A malformed file still fails the build. No Wikipedia data ships, so Wikipedia is not credited; the FCC is credited for station locations in the map attribution and the About panel.
+
+Stations whose id starts with `fcc:` are not sent to Radio Browser's click counter (`src/audio/player.ts`), the same as `curated:` stations, because they are not in the directory. Details: `docs/data-source.md`, "Discovered stations".

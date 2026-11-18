@@ -166,6 +166,13 @@ describe('player controller', () => {
     expect(reportClick).not.toHaveBeenCalled();
   });
 
+  it('an FCC-discovered station ("fcc:") plays without a directory click report', () => {
+    player.play(station('fcc:12345'));
+    el().emit('playing');
+    expect(status()).toBe('playing');
+    expect(reportClick).not.toHaveBeenCalled();
+  });
+
   it('keeps exactly one audio element and unloads the first stream before the second', () => {
     player.play(station('a'));
     const first = el();

@@ -3,9 +3,11 @@
 // Run with `npm run catalog` (network). `npm run build` never fetches.
 //
 // Usage: node --use-env-proxy scripts/build-catalog.mjs [--raw <file.json>] [--out <file>] [--curated <file.json>]
-//   --raw      reuse a saved Radio Browser search response instead of fetching
-//   --out      output path (default public/catalog.json)
-//   --curated  curated stations file (default data/curated-stations.json)
+//                                                       [--discovered <file.json>]
+//   --raw         reuse a saved Radio Browser search response instead of fetching
+//   --out         output path (default public/catalog.json)
+//   --curated     curated stations file (default data/curated-stations.json)
+//   --discovered  discovered stations file (default data/discovered-stations.json; a missing file counts as no discovered stations)
 //
 // Source: GET <server>/json/stations/search?countrycode=US&hidebroken=true
 //         &limit=100000&order=clickcount&reverse=true ; server from /json/servers, fallback de1/de2/fi1.
@@ -14,6 +16,12 @@
 // Curated stations (data/curated-stations.json, src/catalog/curated.mjs) are hand-checked extra stations that
 // Radio Browser does not list. They are merged after the Radio Browser stations, through the same rules, and a
 // curated entry whose stream is already in the Radio Browser data is skipped. An invalid curated file fails the build.
+// Discovered stations (data/discovered-stations.json, from `npm run discover`, src/catalog/discovered.mjs) are merged
+// after the curated ones through the same rules. A missing discovered file means no discovered stations; it is not an
+// error. Directory and curated stations win: a discovered entry is skipped when
+// its stream is already listed, or when a directory or curated station has the same call sign and state. Then the FCC
+// transmitter coordinates (data/fcc-stations.json) fill directory stations that have none, when exactly one licence matches
+// (scripts/fcc-coords.mjs). Directory coordinates always win.
 // Rules (genres, excludes, state parsing, coordinates) live in src/catalog/rules.mjs and are shared
 // with the unit tests.
 //
@@ -49,7 +57,11 @@ import {
   mergeCurated,
   parseCurated,
   radioBrowserStreamKeys,
+  streamKey,
 } from '../src/catalog/curated.mjs';
+import { mergeDiscovered, parseDiscovered } from '../src/catalog/discovered.mjs';
+import { fillFccCoords, sameCallStation } from './fcc-coords.mjs';
+import { parseDataFile } from './fcc-gap.mjs';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +75,8 @@ const argOf = (name) => {
 const rawPath = argOf('--raw');
 const outPath = resolve(root, argOf('--out') ?? 'public/catalog.json');
 const curatedPath = resolve(root, argOf('--curated') ?? 'data/curated-stations.json');
+const discoveredPath = resolve(root, argOf('--discovered') ?? 'data/discovered-stations.json');
+const fccPath = resolve(root, 'data/fcc-stations.json');
 
 const DISCOVERY = 'https://all.api.radio-browser.info/json/servers';
 const FALLBACK = ['de1', 'de2', 'fi1'].map((h) => `${h}.api.radio-browser.info`);
@@ -149,6 +163,23 @@ function loadCurated() {
   return stations;
 }
 
+/**
+ * Reads the discovered file. A missing file is an empty list (present: false). Any other read error, or any invalid
+ * entry, fails the build.
+ */
+function loadDiscovered() {
+  let text;
+  try {
+    text = readFileSync(discoveredPath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return { stations: [], present: false };
+    throw new Error(`cannot read discovered stations ${discoveredPath} (${err.code ?? err.message})`);
+  }
+  const { stations, errors } = parseDiscovered(JSON.parse(text));
+  if (errors.length > 0) throw new Error(`invalid discovered stations in ${discoveredPath}:\n  ${errors.join('\n  ')}`);
+  return { stations, present: true };
+}
+
 async function main() {
   const raw = await loadRaw();
   const shapes = loadStateShapes();
@@ -181,7 +212,14 @@ async function main() {
     const entry = curatedEntries.find((e) => e.id === id);
     console.warn(`WARNING ${id} replaces ${entry.replaces}, which is not in the Radio Browser data; added as ${id} with no directory clicks.`);
   }
-  const unique = merge.stations;
+  const discovered = loadDiscovered();
+  const disc = mergeDiscovered(merge.stations, discovered.stations, {
+    streamKeys: [...new Set([...radioBrowserStreamKeys(raw), ...merge.stations.map((s) => streamKey(s.streamUrl))])],
+    sameStation: sameCallStation,
+    polygonState,
+  });
+  const fill = fillFccCoords(disc.stations, parseDataFile(readFileSync(fccPath, 'utf8')).stations);
+  const unique = disc.stations;
 
   // Upgrade counts over the stations that are in the file (after dedupe).
   const up = { musicStreams: 0, uncategorizedStreams: 0, favicons: 0 };
@@ -241,6 +279,7 @@ async function main() {
   console.log(`with coords: ${withCoords}; coords dropped as outside US: ${coordsDropped}`);
   console.log(`stateCode sources: iso ${sources.iso}, name ${sources.name}, polygon ${sources.polygon}, null ${sources.null}`);
   const droppedCurated = Object.entries(merge.dropped).map(([r, n]) => `${r} ${n}`).join(', ') || 'none';
+  const droppedDisc = Object.entries(disc.dropped).map(([r, n]) => `${r} ${n}`).join(', ') || 'none';
   console.log(
     `curated (${curatedEntries.length} in ${curatedPath}): added ${merge.added}, ` +
       `skipped (Radio Browser has the stream) ${merge.skipped.length}, dropped by the rules ${droppedCurated}`,
@@ -249,6 +288,17 @@ async function main() {
     `curated replaces (directory station corrected, its id and clicks kept): ${merge.replaced.length}` +
       (merge.replaced.length > 0 ? ` (${merge.replaced.join(', ')})` : ''),
   );
+  if (discovered.present) {
+    console.log(
+      `discovered (${discovered.stations.length} in ${discoveredPath}): added ${disc.added}, ` +
+        `skipped (stream already listed) ${disc.skipped.stream.length}, ` +
+        `skipped (same call sign and state as a directory or curated station) ${disc.skipped.call.length}, ` +
+        `dropped by the rules ${droppedDisc}`,
+    );
+  } else {
+    console.log('discovered: 0 (file not present)');
+  }
+  console.log(`FCC coordinates filled (directory stations with none, one licence matches): ${fill.filled}; ambiguous, left without: ${fill.ambiguous}`);
   console.log(`file ${outPath}: raw ${bytes} bytes (${(bytes / 1024).toFixed(0)} KiB), gzip ${gz} bytes`);
 }
 
