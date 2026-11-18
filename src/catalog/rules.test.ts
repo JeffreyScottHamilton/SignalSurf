@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyDetailed,
   classifyStation,
+  cleanStreamUrl,
   dedupeCatalog,
   nameGenres,
   CATALOG_KEYS,
@@ -588,5 +589,74 @@ describe('normalizeRaw with https hosts', () => {
       expect(r.station.homepage).toBe('http://other.test/');
       expect(r.upgraded).toEqual({ stream: false, favicon: false });
     }
+  });
+});
+
+describe('cleanStreamUrl', () => {
+  it('removes the listener session, location and player params from an FM100.3-style URL', () => {
+    expect(
+      cleanStreamUrl(
+        'https://bonneville.cdnstream1.com/2702_48.aac?aw_0_1st.playerid=Tuner&newListeningSessionID=abc123&lat=40.76&lon=-111.89',
+      ),
+    ).toBe('https://bonneville.cdnstream1.com/2702_48.aac');
+  });
+
+  it('keeps streamid and type on an iHeart hls URL with mixed params', () => {
+    expect(
+      cleanStreamUrl(
+        'https://stream.revma.ihrhls.com/zc5060/hls.m3u8?streamid=5060&zip=84101&profileid=123&uid=9&terminalid=web&us_privacy=1YNN&modTime=1700000000&init_id=x&utm_source=a&type=hls',
+      ),
+    ).toBe('https://stream.revma.ihrhls.com/zc5060/hls.m3u8?streamid=5060&type=hls');
+  });
+
+  it('keeps an unknown param, in its original order', () => {
+    expect(cleanStreamUrl('https://x.test/live?foo=1&lat=1&streamid=2&lon=3')).toBe('https://x.test/live?foo=1&streamid=2');
+  });
+
+  it('returns a URL with no query unchanged', () => {
+    expect(cleanStreamUrl('https://x.test/live.mp3')).toBe('https://x.test/live.mp3');
+    expect(cleanStreamUrl('https://x.test/live.mp3?')).toBe('https://x.test/live.mp3?');
+  });
+
+  it('returns an invalid URL unchanged', () => {
+    expect(cleanStreamUrl('not a url?lat=1')).toBe('not a url?lat=1');
+    expect(cleanStreamUrl('https://[bad?lat=1')).toBe('https://[bad?lat=1');
+    expect(cleanStreamUrl('')).toBe('');
+  });
+
+  it('matches names case-insensitively, including percent-encoded names', () => {
+    expect(cleanStreamUrl('https://x.test/a?LAT=1&Aw_0_1st.PlayerId=x&%6Con=2&playSessionID=9&q=3')).toBe('https://x.test/a?q=3');
+  });
+
+  it('removes aw_0_req.*, aw_0_azn.*, gdpr* and utm_* params, and keeps a name that only starts like one', () => {
+    expect(
+      cleanStreamUrl('https://x.test/a?aw_0_req.x=1&aw_0_azn.y=2&gdpr_consent=3&gdpr=4&utm_medium=5&aw_0_other=6&agex=7'),
+    ).toBe('https://x.test/a?aw_0_other=6&agex=7');
+  });
+
+  it('keeps the scheme, host, port, path, encoding and fragment', () => {
+    expect(cleanStreamUrl('https://x.test:8443/a/b%20c?name=a%20b&zip=1#frag')).toBe('https://x.test:8443/a/b%20c?name=a%20b#frag');
+  });
+
+  it('drops the "?" when every param is removed', () => {
+    expect(cleanStreamUrl('https://x.test/a?lat=1&lon=2')).toBe('https://x.test/a');
+    expect(cleanStreamUrl('https://x.test/a?lat=1#frag')).toBe('https://x.test/a#frag');
+  });
+});
+
+describe('normalizeRaw cleans the stream URL before dedupe', () => {
+  it('stores the clean stream URL', () => {
+    const r = normalizeRaw(raw({ url: 'https://s.test/a?lat=1&streamid=9', url_resolved: 'https://s.test/a?lat=1&streamid=9' }), polygonNone);
+    expect(r.reason).toBeNull();
+    if (r.reason === null) expect(r.station).toMatchObject({ streamUrl: 'https://s.test/a?streamid=9' });
+  });
+
+  it('collapses two records that differ only in listener params into one station', () => {
+    const a = normalizeRaw(raw({ stationuuid: 'a1b2c3d4-0000-4000-8000-0000000000a1', url_resolved: 'https://s.test/a?lat=1', clickcount: 5 }), polygonNone);
+    const b = normalizeRaw(raw({ stationuuid: 'a1b2c3d4-0000-4000-8000-0000000000b2', url_resolved: 'https://s.test/a?lon=2', clickcount: 9 }), polygonNone);
+    expect(a.reason === null && b.reason === null).toBe(true);
+    if (a.reason !== null || b.reason !== null) return;
+    const out = dedupeCatalog([a.station, b.station]);
+    expect(out.map((s) => s.id)).toEqual(['a1b2c3d4-0000-4000-8000-0000000000a1']);
   });
 });

@@ -174,6 +174,54 @@ Spot-check, 2026-11-18, from the build sandbox (its proxy denies some hosts; res
 
 So the https hosts answer, and one stream was confirmed as audio. Four redirect to CDN hosts the sandbox cannot reach, so their playback is not verified.
 
+## Listener and tracking parameters in stream URLs
+
+Many directory stream URLs carry another listener's session or tracking data in the query string, for example `?aw_0_1st.playerid=Tuner&newListeningSessionID=...&lat=..&lon=..`, or the iHeart `zip=`, `profileId=`, `listenerId=`, `terminalId=`, `birthYear=` and `us_privacy=`. A player sends that query on every play, and a stale token in it can break a stream.
+
+`cleanStreamUrl` (`src/catalog/rules.mjs`) removes those parameters. `normalizeRaw` applies it to the stream URL after any http-to-https upgrade and before the https check and dedupe, so two records that differ only in those parameters are one station.
+
+Rules:
+
+1. **Names match case-insensitively**, after percent-decoding. Exact names are in `CLEAN_PARAM_NAMES`: `newListeningSessionID`, `listeningSessionID`, `playSessionID`, `sessionid`, `session-id`, `lat`, `lon`, `zip`, `uid`, `listenerId`, `profileId`, `birthYear`, `age`, `gender`, `us_privacy`, `init_id`, `modTime`, `terminalId`, `deviceName`, `fb_broadcast`, `companionAds`, `playedFrom`, `pname`, `host`, `clientType`, `dist`, `territory`, `callLetters`, `rj-ttl`, `rj-tok`. Prefixes are in `CLEAN_PARAM_PREFIXES`: `aw_0_1st.*` (any), `aw_0_req.*`, `aw_0_azn.*`, `gdpr*`, `utm_*`.
+2. **Every other parameter is kept**, in its original order and encoding. Some servers need parameters the directory does not document (`streamid`, `type`), so an unknown name is never removed.
+3. **The scheme, host, port, path and fragment are never changed.** An empty query loses its `?`. A URL that does not parse, or has nothing to remove, is returned unchanged.
+
+Build result, `npm run catalog` on 2026-11-18 (live, exit 0):
+
+- Stream URLs cleaned: **190 of 7,009** raw records (the `stream URLs cleaned` line of the build summary).
+- Newly collapsed in dedupe: **6 stations**. On one saved directory snapshot (7,009 records), the old rules leave 4,421 Radio Browser stations after dedupe and the new rules 4,415. The six are 103.7 The Oasis, The Light FM, KUTX AMX, WVCO - 94.9 The Surf, 100.3 The Edge and KUTC the Boss 95.7. Each one keeps the other record with the same clean stream.
+- Total in the file: **4,416** (4,415 Radio Browser plus 1 curated). The committed file before this change had 4,420, but it came from an earlier directory snapshot, so the difference mixes directory changes with cleaning. The snapshot comparison above is the measure of this change.
+
+Examples (before, then after; `u` in the file):
+
+| Station | Before | After |
+|---|---|---|
+| KEXP | `kexp160.aac?listenerid=f4bcb5c7...&awparams=companionAds%3Atrue` | `kexp160.aac?awparams=companionAds%3Atrue` |
+| 100hitz - Top 40 | `6025_128.mp3?DIST=TuneIn&TGT=TuneIn&maxServers=2&gdpr=0&us_privacy=1YNY&partnertok=...` | `6025_128.mp3?TGT=TuneIn&maxServers=2&partnertok=...` |
+| La Mega 97.9 | `NY_WSKQ_icy?source=TuneIn&bundle=tunein.com&lat=36.3933&long=-97.9158` | `NY_WSKQ_icy?source=TuneIn&bundle=tunein.com&long=-97.9158` |
+| 97.1 The Eagle Rocks | `zc2241/hls.m3u8?streamid=2241&zip=&aw_0_1st.playerid=iHeartRadioWebPlayer&...&listenerId=...&profileId=...&terminalId=159&...` | `zc2241/hls.m3u8?streamid=2241&stationid=2241` |
+| 103.7 The Oasis | `KOAZAM?playSessionID=EE67F132-DB59-0E2B-D5F260EC5335C908` | `KOAZAM` |
+
+Remaining query strings: **400 of 4,416** stream URLs still have a query. The ten most common parameter names: `mp` 112, `uuid` 29, `ref` 29, `streamid` 22, `source` 18, `partnertok` 14, `zt` 14, `type` 14, `TGT` 13, `maxServers` 13. They were left in place for these reasons:
+
+- `mp` is a mount path (`/stream/;`, `/1`), not listener data. `streamid` and `type` are kept on purpose (rule 2).
+- `partnertok` and `zt` are TuneIn partner or stream tokens (JWTs). They are not listener data, but they may be stale. Removing them is a decision for the manager.
+- `uuid` is either a device id or a mount name, depending on the host. `ref=radiobrowser` is the directory's own tag. `TGT`, `source` and `maxServers` are targeting or source tags, the same kind as `DIST`, which is removed.
+
+Spot-checks, 2026-11-18, `curl` from the build sandbox through the normal proxy, with a ranged request (`-r 0-4095`) and a 20 s limit. The redirects were not followed. The servers ignored the range and streamed the body, so `curl` stopped at 20 s; the status and content-type are the headers:
+
+| URL (cleaned) | Result |
+|---|---|
+| `https://stream.revma.ihrhls.com/zc2241/hls.m3u8?streamid=2241&stationid=2241` | `302` to `https://n01a-e2.revma.ihrhls.com/zc2241/hls.m3u8?rj-ttl=5&rj-tok=...&streamid=2241&stationid=2241`. The server added its own `rj-ttl`/`rj-tok` to the redirect, so those tokens are per play and not needed in the directory URL. |
+| `https://bonneville.cdnstream1.com/2617_48.aac` | `200`, `Content-Type: audio/aacp`, audio streamed (299,996 bytes before the 20 s limit). |
+| `https://streaming.live365.com/a37180` | `302` to `https://das-edge93-live365-dal05.cdnstream.com/a37180`. The redirect target was not checked. |
+| Control, `https://listen.181fm.com/181-blues_128k.mp3` (not cleaned; the file has no cleaned 181fm URL) | `200`, `Content-Type: audio/mpeg`, audio streamed. |
+
+Limits:
+
+- The list is a judgement from the URLs seen in this data. A server may need one of the removed names; the three spot-checks do not test every host, and nothing was played in a browser.
+- The curated skip check compares stream keys (`streamKey` in `src/catalog/curated.mjs`), and both sides are cleaned with `cleanStreamUrl` first. A directory URL with a session therefore matches the clean curated URL, and the curated entry is skipped (test in `curated.test.ts`). Before this change the comparison used the raw directory URL.
+
 ## Data quality notes
 
 - Names can carry leading or doubled spaces. Names are trimmed and whitespace is collapsed.

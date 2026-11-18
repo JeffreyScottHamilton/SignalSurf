@@ -264,6 +264,13 @@ describe('mergeCurated', () => {
     expect(merged.skipped).toEqual(['curated:kbzn']);
   });
 
+  it('skips a curated entry when the directory lists its stream with listener params', () => {
+    const rows = [rbRow({ url: `${KBZN_STREAM}?newListeningSessionID=abc&lat=40.7&lon=-111.9`, url_resolved: `${KBZN_STREAM}?newListeningSessionID=abc&lat=40.7&lon=-111.9` })];
+    const merged = mergeCurated([], curatedRecords([KBZN], null), radioBrowserStreamKeys(rows), rows);
+    expect(merged.skipped).toEqual(['curated:kbzn']);
+    expect(merged.added).toBe(0);
+  });
+
   it('counts curated entries the rules drop, by reason, and does not add them', () => {
     const talk: CuratedEntry = { ...KBZN, id: 'curated:talk-one', tags: ['talk'], streamUrl: 'https://s.test/talk' };
     const merged = mergeCurated([], curatedRecords([talk], null), new Set());
@@ -361,7 +368,7 @@ describe('replaces: a curated entry corrects a directory station', () => {
     const merged = mergeCurated([directoryKsfi()], curatedRecords([talk], null), radioBrowserStreamKeys(rows), rows);
     expect(merged.dropped).toEqual({ 'hard-exclude': 1 });
     expect(merged.replaced).toEqual([]);
-    expect(merged.stations.map((s) => s.streamUrl)).toEqual([KSFI_SESSION]);
+    expect(merged.stations.map((s) => s.streamUrl)).toEqual([KSFI_CLEAN]);
   });
 });
 

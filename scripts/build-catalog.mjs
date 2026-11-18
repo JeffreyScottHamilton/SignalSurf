@@ -35,6 +35,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import {
+  cleanStreamUrl,
   dedupeCatalog,
   httpsHostKeys,
   normalizeRaw,
@@ -230,6 +231,11 @@ async function main() {
   );
   console.log(`genres (a station may count twice): ${GENRES.map((g) => `${g} ${genreCounts[g]}`).join(', ')}`);
   console.log(`admitted by name (no genre from tags): ${byName}`);
+  const cleaned = raw.filter((row) => {
+    const t = [row?.url_resolved, row?.url].map((v) => (typeof v === 'string' ? v.trim() : '')).find((v) => v !== '');
+    return t !== undefined && cleanStreamUrl(t) !== t;
+  }).length;
+  console.log(`stream URLs cleaned (listener and tracking params removed): ${cleaned} of ${raw.length} raw records`);
   console.log(`uncategorized (no tags at all, kept with genres []): ${uncategorized}`);
   console.log(`genre-less kept (All only): ${noGenre}`);
   console.log(`with coords: ${withCoords}; coords dropped as outside US: ${coordsDropped}`);

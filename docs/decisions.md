@@ -139,3 +139,9 @@ Reason: the host is evidence that the server does serve HTTPS. In the 2026-11-18
 ## Small custom store and plain CSS
 
 `src/lib/createStore.ts` is a small store with a `useStore` hook built on `useSyncExternalStore`. The three views switch with state, and the URL does not change, so there is no router. Colours, spacing and type are CSS custom properties in `src/styles/tokens.css`; components use plain CSS with the `ss-` class prefix. Reason: the app has a few shared values and a fixed visual system, so a state library, a router or a CSS framework would add weight without a benefit.
+
+## Listener and tracking parameters are removed from stream URLs
+
+Many directory stream URLs carry another listener's session, location and tracking data in the query string (`listenerId`, `playSessionID`, `zip`, `lat`/`lon`, `aw_0_1st.*`, `us_privacy`, and similar). The player sends that query on every play, and a stale token in it can break the stream. `cleanStreamUrl` in `src/catalog/rules.mjs` removes a documented list of those names, matched case-insensitively, plus the `aw_0_1st.*`, `aw_0_req.*`, `aw_0_azn.*`, `gdpr*` and `utm_*` prefixes. Every other parameter is kept in its original order, because some servers need undocumented parameters such as `streamid` and `type`. The scheme, host, port and path are never changed.
+
+It runs in `normalizeRaw` before the https check and dedupe, so two records that differ only in listener data are one station. In the 2026-11-18 build 190 raw records were cleaned, and 6 stations newly collapse in dedupe (the other record of each keeps its place). Reason: the listener data is not part of the stream, and it should not split one station into two or be sent to every stream host. Trade-off accepted: a server that needs one of the removed names would break, so the list is kept short and documented in `docs/data-source.md`, where the remaining query strings are also listed for review.

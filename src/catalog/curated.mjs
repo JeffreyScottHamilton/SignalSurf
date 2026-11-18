@@ -4,9 +4,9 @@
 //
 // A curated entry goes through the same normalizeRaw rules as a Radio Browser record (https stream,
 // music tags, coordinates in a US box, state text). Radio Browser wins: a curated entry whose stream
-// is already in the Radio Browser data (raw stream URL, http or https) is skipped.
+// is already in the Radio Browser data (stream URL after cleanStreamUrl, http or https) is skipped.
 
-import { inUsBox, normalizeRaw, parseStateText } from './rules.mjs';
+import { cleanStreamUrl, inUsBox, normalizeRaw, parseStateText } from './rules.mjs';
 
 /** Curated ids: "curated:" then lower-case letters, digits and hyphens. */
 export const CURATED_ID_RE = /^curated:[a-z0-9][a-z0-9-]*$/;
@@ -16,9 +16,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
 
-/** Stream key for matching: trimmed, with http:// read as https://, so an http twin in Radio Browser matches. */
+/**
+ * Stream key for matching: trimmed, listener and tracking params removed (cleanStreamUrl), with http:// read as
+ * https://. A directory URL that carries a session matches the clean curated URL, and an http twin matches too.
+ */
 export function streamKey(url) {
-  return String(url).trim().replace(/^http:\/\//i, 'https://');
+  return cleanStreamUrl(String(url).trim()).replace(/^http:\/\//i, 'https://');
 }
 
 function parsesAs(v, protocols) {

@@ -376,6 +376,8 @@ export function normalizeRaw(raw, polygonState, httpsKeys = null) {
       streamUpgraded = true;
     }
   }
+  // Listener and tracking params go before dedupe, so two records that differ only in them are one stream.
+  if (streamText !== null) streamText = cleanStreamUrl(streamText);
   const streamOk = streamText !== null && /^https:\/\//i.test(streamText) && isUrl(streamText);
   if (!streamOk) return { reason: 'non-https' };
 
@@ -488,6 +490,63 @@ export function upgradeHttpUrl(url, httpsKeys) {
   if (!/^http:\/\//i.test(t) || !isUrl(t)) return null;
   if (!httpsKeys.has(new URL(t).host)) return null;
   return `https://${t.slice('http://'.length)}`;
+}
+
+/**
+ * Query parameter names (lower case, matched case-insensitively after percent-decoding) that carry a
+ * listener's session, location, identity, consent or tracking data. cleanStreamUrl removes them.
+ * Each name was seen in Radio Browser stream URLs or is a known player or ad-tracking name.
+ */
+export const CLEAN_PARAM_NAMES = [
+  'newlisteningsessionid', 'listeningsessionid', 'playsessionid', 'sessionid', 'session-id',
+  'lat', 'lon', 'zip', 'uid', 'listenerid', 'profileid',
+  'birthyear', 'age', 'gender', 'us_privacy', 'init_id', 'modtime', 'terminalid', 'devicename',
+  'fb_broadcast', 'companionads', 'playedfrom', 'pname', 'host', 'clienttype', 'dist', 'territory', 'calletters',
+  'rj-ttl', 'rj-tok',
+];
+/**
+ * Query parameter name prefixes (lower case). aw_0_1st.* is the listener id, aw_0_req.* and aw_0_azn.* are
+ * request and ad data, gdpr* is consent, utm_* is campaign tracking.
+ */
+export const CLEAN_PARAM_PREFIXES = ['aw_0_1st.', 'aw_0_req.', 'aw_0_azn.', 'gdpr', 'utm_'];
+
+function isCleanParam(part) {
+  const eq = part.indexOf('=');
+  const rawName = eq >= 0 ? part.slice(0, eq) : part;
+  let name;
+  try {
+    name = decodeURIComponent(rawName);
+  } catch {
+    name = rawName;
+  }
+  name = name.toLowerCase();
+  return CLEAN_PARAM_NAMES.includes(name) || CLEAN_PARAM_PREFIXES.some((p) => name.startsWith(p));
+}
+
+/**
+ * Removes listener-specific and tracking query parameters from a stream URL (CLEAN_PARAM_NAMES and
+ * CLEAN_PARAM_PREFIXES). Every other parameter is kept, in its original order and encoding, because some
+ * servers need parameters they do not document (streamid, type). The scheme, host, port, path and
+ * fragment are never changed. An empty query loses its "?". A URL that does not parse, or has no
+ * parameter to remove, is returned unchanged.
+ */
+export function cleanStreamUrl(url) {
+  if (typeof url !== 'string') return url;
+  try {
+    new URL(url);
+  } catch {
+    return url;
+  }
+  const hashAt = url.indexOf('#');
+  const hash = hashAt >= 0 ? url.slice(hashAt) : '';
+  const head = hashAt >= 0 ? url.slice(0, hashAt) : url;
+  const qAt = head.indexOf('?');
+  if (qAt < 0) return url;
+  const parts = head.slice(qAt + 1).split('&');
+  const kept = parts.filter((part) => !isCleanParam(part));
+  if (kept.length === parts.length) return url;
+  const query = kept.join('&');
+  return head.slice(0, qAt) + (query.length > 0 ? `?${query}` : '') + hash;
 }
 
 function finite(v) {

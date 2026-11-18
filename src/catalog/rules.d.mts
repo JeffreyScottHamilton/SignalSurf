@@ -46,6 +46,9 @@ export declare function normalizeRaw(raw: unknown, polygonState?: ((lng: number,
 export declare function httpsHostKeys(rawRows: readonly unknown[]): Set<string>;
 export declare function upgradeHttpUrl(url: unknown, httpsKeys: ReadonlySet<string> | null): string | null;
 export declare function parseTags(v: unknown): string[];
+export declare const CLEAN_PARAM_NAMES: readonly string[];
+export declare const CLEAN_PARAM_PREFIXES: readonly string[];
+export declare function cleanStreamUrl(url: string): string;
 export declare function dedupeCatalog<T extends { id: string; streamUrl: string }>(list: T[]): T[];
 export declare const CATALOG_KEYS: Record<string, string>;
 export declare function expandCatalogRecord<T>(rec: T): T;
