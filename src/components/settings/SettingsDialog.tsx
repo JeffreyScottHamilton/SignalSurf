@@ -135,7 +135,7 @@ export function SettingsDialog() {
               <div className="ss-about__body">
                 <p>
                   {BRAND.name} is a free map of US music stations you can play in the browser. Station data comes from
-                  the community-run Radio Browser directory, filtered to US music stations; streams play directly from
+                  the community-run Radio Browser directory, filtered to US music stations (a few list no genre and are marked "Genre not listed"); streams play directly from
                   each broadcaster. Stations without a known location are in the list only.
                 </p>
                 {catalogUpdated !== null && <p>Catalogue updated {catalogUpdated}</p>}

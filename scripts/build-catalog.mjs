@@ -17,6 +17,7 @@
 //   f favicon (https or absent)   s stateCode (2-letter US state/territory, never guessed)
 //   c city (from the raw state text, or absent)   t tags (lower case, max 3)   g genres (ids; [] when none)
 //   x hls (present only when true)   a lat, o lng (inside a US box, 4 decimals; absent when none)
+//   y uncategorized (present only when true): no tags at all, genres [] ; shows "Genre not listed"
 //   k clickCount (directory popularity)
 // A key whose value is null, false or an empty list is left out; the app reads a missing key as that empty value.
 // codec and bitrate are not written: no screen or player reads them, and the sanitiser fills them with null.
@@ -154,8 +155,10 @@ async function main() {
   const genreCounts = Object.fromEntries(GENRES.map((g) => [g, 0]));
   let noGenre = 0;
   let withCoords = 0;
+  let uncategorized = 0;
   for (const s of stations) {
     if (s.genres.length === 0) noGenre += 1;
+    if (s.uncategorized === true) uncategorized += 1;
     for (const g of s.genres) genreCounts[g] += 1;
     if (s.lat !== undefined) withCoords += 1;
   }
@@ -175,11 +178,12 @@ async function main() {
   const kept_ = stations.length;
   console.log(`raw ${raw.length}; kept ${kept_} (${pct(kept_, raw.length)}%)`);
   console.log(
-    `dropped: untagged ${drop.untagged}, hard-exclude ${drop['hard-exclude']}, no-genre ${drop['no-genre']}, ` +
+    `dropped: untagged (no tags, name excluded) ${drop.untagged}, hard-exclude ${drop['hard-exclude']}, no-genre ${drop['no-genre']}, ` +
       `non-https ${drop['non-https']}, duplicate ${drop.duplicate}, junk ${drop.junk}`,
   );
   console.log(`genres (a station may count twice): ${GENRES.map((g) => `${g} ${genreCounts[g]}`).join(', ')}`);
   console.log(`admitted by name (no genre from tags): ${byName}`);
+  console.log(`uncategorized (no tags at all, kept with genres []): ${uncategorized}`);
   console.log(`genre-less kept (All only): ${noGenre}`);
   console.log(`with coords: ${withCoords}; coords dropped as outside US: ${coordsDropped}`);
   console.log(`stateCode sources: iso ${sources.iso}, name ${sources.name}, polygon ${sources.polygon}, null ${sources.null}`);

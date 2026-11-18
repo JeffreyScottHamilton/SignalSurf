@@ -12,8 +12,8 @@ export interface TileSource {
 }
 
 // Phones get the short credit (CSS picks one under 768px). The streets credit must stay in both forms.
-const USGS_LONG = 'Map: <a href="https://www.usgs.gov/">USGS</a> The National Map';
-const USGS_SHORT = 'Map: <a href="https://www.usgs.gov/">USGS</a>';
+const USGS_LONG = '<a href="https://www.usgs.gov/">USGS</a> The National Map';
+const USGS_SHORT = '<a href="https://www.usgs.gov/">USGS</a>';
 
 /**
  * Streets: USGS Topo (public domain), dimmed by a CSS filter in the map styles. Satellite: USGS ImageryOnly (public domain).

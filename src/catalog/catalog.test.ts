@@ -57,6 +57,14 @@ describe('parseCatalog', () => {
     expect(out?.stations[0].coords).toEqual({ lat: 30.27, lng: -97.74 });
   });
 
+  it('keeps the uncategorized flag from the short key y and drops it when absent', () => {
+    const out = cat.parseCatalog(
+      doc([GOOD('station-0001', { y: true, genres: [], tags: [] }), GOOD('station-0002')]),
+    );
+    expect(out?.stations[0]).toMatchObject({ id: 'station-0001', uncategorized: true, genres: [] });
+    expect(out?.stations[1]).not.toHaveProperty('uncategorized');
+  });
+
   it('removes repeated ids, keeping the first', () => {
     const out = cat.parseCatalog(doc([GOOD('station-0001', { name: 'First' }), GOOD('station-0001', { name: 'Second' })]));
     expect(out?.stations).toHaveLength(1);

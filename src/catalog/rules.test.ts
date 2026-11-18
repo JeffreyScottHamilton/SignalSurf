@@ -99,9 +99,10 @@ describe('classifyStation: genres', () => {
     expect(classifyStation(['christmas']).genres).toEqual(['pop']);
   });
 
-  it('treats no tags, or only blank tags, as untagged', () => {
-    expect(classifyStation([])).toEqual({ reason: 'untagged', genres: [] });
-    expect(classifyStation(['  ', ''])).toEqual({ reason: 'untagged', genres: [] });
+  it('keeps a station with no tags and no name genre as uncategorized, with genres []', () => {
+    expect(classifyStation([])).toEqual({ reason: null, genres: [] });
+    expect(classifyStation(['  ', ''])).toEqual({ reason: null, genres: [] });
+    expect(classifyDetailed([], 'KTST 96.5 FM')).toEqual({ reason: null, genres: [], by: 'uncategorized' });
   });
 });
 
@@ -144,11 +145,17 @@ describe('classifyStation: name rule', () => {
     expect(classifyDetailed(['jazz'], 'Rock Station')).toEqual({ reason: null, genres: ['jazz'], by: 'tags' });
   });
 
+  it('gives an untagged station its name genre, not uncategorized', () => {
+    expect(classifyDetailed([], 'Rock 101')).toEqual({ reason: null, genres: ['rock'], by: 'name' });
+    expect(classifyDetailed(['', '  '], 'Gospel Hour').by).toBe('name');
+    expect(classifyDetailed([], 'Jazz News').reason).toBe('untagged');
+  });
+
   it('matches whole words only', () => {
     expect(nameGenres('Rockford Radio').genres).toEqual([]);
     expect(nameGenres('Popular Music FM').genres).toEqual([]);
     expect(nameGenres('Countryside Gospel').genres).toEqual(['christian']);
-    expect(classifyStation([], 'Rockford Radio').reason).toBe('untagged');
+    expect(classifyStation([], 'Rockford Radio')).toEqual({ reason: null, genres: [] });
   });
 
   it('does not admit a name with a hard-exclude word', () => {
@@ -166,10 +173,31 @@ describe('classifyStation: name rule', () => {
     expect(nameGenres("Radio 90's Country").genres).toEqual(['country', 'oldies']);
   });
 
-  it('does not admit call letters or generic words', () => {
-    expect(classifyStation([], 'KTST 96.5 FM').reason).toBe('untagged');
+  it('does not admit call letters or generic words as a genre; untagged stations stay uncategorized', () => {
+    expect(classifyStation([], 'KTST 96.5 FM')).toEqual({ reason: null, genres: [] });
     expect(classifyStation(['gardening'], 'WXYZ Radio').reason).toBe('no-genre');
-    expect(classifyStation([], 'Austin City Radio').reason).toBe('untagged');
+    expect(classifyStation([], 'Austin City Radio')).toEqual({ reason: null, genres: [] });
+  });
+
+  it('excludes an untagged station whose name holds a non-music word', () => {
+    for (const name of [
+      'Fire Dispatch', 'Sheriff Radio', 'EMS 1', 'Church FM', 'Ministries Radio', 'Audiobooks Hub',
+      'Podcast Corner', 'Comedy Club', 'Local Weather', 'Teaching Hour', 'Sermons Live', 'Police Channel',
+      'The Bible Hour', 'Sports Talk', 'Scanner 1', 'Traffic Watch', 'Ministry Hour', 'NPR News',
+    ]) {
+      expect(classifyDetailed([], name), name).toEqual({ reason: 'untagged', genres: [], by: null });
+    }
+  });
+
+  it('matches the uncategorized name excludes as whole words', () => {
+    expect(classifyDetailed([], 'Fireside Radio').by).toBe('uncategorized');
+    expect(classifyDetailed([], 'Emsworth FM').by).toBe('uncategorized');
+    expect(classifyDetailed([], 'Churchill Avenue').by).toBe('uncategorized');
+    expect(classifyDetailed([], 'Preachers Radio').by).toBe('uncategorized');
+  });
+
+  it('keeps a station whose tags are all generic music words with genres []; its tags are not "no tags"', () => {
+    expect(classifyDetailed(['music'], 'Church Radio')).toEqual({ reason: null, genres: [], by: 'tags' });
   });
 });
 
@@ -330,9 +358,30 @@ describe('normalizeRaw', () => {
   });
 
   it('drops unmusical stations with their reason', () => {
-    expect(normalizeRaw(raw({ tags: '' }), polygonNone)).toEqual({ reason: 'untagged' });
+    expect(normalizeRaw(raw({ tags: '', name: 'Church Radio' }), polygonNone)).toEqual({ reason: 'untagged' });
     expect(normalizeRaw(raw({ tags: 'news' }), polygonNone)).toEqual({ reason: 'hard-exclude' });
     expect(normalizeRaw(raw({ tags: 'public radio' }), polygonNone)).toEqual({ reason: 'no-genre' });
+  });
+
+  it('keeps an https untagged station as uncategorized, with the flag and no genres', () => {
+    const r = normalizeRaw(raw({ tags: '', name: 'KTST Radio' }), polygonNone);
+    expect(r.reason).toBeNull();
+    if (r.reason === null) {
+      expect(r.by).toBe('uncategorized');
+      expect(r.station.genres).toEqual([]);
+      expect(r.station.tags).toEqual([]);
+      expect(r.station.uncategorized).toBe(true);
+    }
+  });
+
+  it('writes no uncategorized key for a station with genres, and expands the flag back', () => {
+    const tagged = normalizeRaw(raw(), polygonNone);
+    expect(tagged.reason === null && 'uncategorized' in tagged.station).toBe(false);
+    const r = normalizeRaw(raw({ tags: '' }), polygonNone);
+    if (r.reason === null) {
+      expect(CATALOG_KEYS.uncategorized).toBe('y');
+      expect(expandCatalogRecord({ i: 'x', y: true })).toEqual({ id: 'x', uncategorized: true });
+    }
   });
 
   it('keeps at most three tags', () => {

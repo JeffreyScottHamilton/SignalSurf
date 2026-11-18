@@ -23,39 +23,40 @@ API facts below were checked on 2026-11-13 with the commands or URLs shown. The 
 
 The API docs (`https://de1.api.radio-browser.info/`) say: "This webservice can be used freely but without guarantee to work." The directory is volunteer-run, so the catalogue is built by hand and committed, not fetched at runtime.
 
-## Catalogue build, 2026-11-17
+## Catalogue build, 2026-11-18
 
 Command: `npm run catalog` (exit 0). Source: de1.api.radio-browser.info.
 
 | Measure | Value |
 |---|---|
-| Raw US records returned | 4,712 |
-| Kept | 2,721 (57.7%) |
-| Dropped: untagged | 1,220 |
-| Dropped: hard-exclude tag or name word | 534 |
+| Raw US records returned | 4,736 |
+| Kept | 3,895 (82.2%) |
+| Kept as uncategorized (no tags at all; genres `[]`; marked `uncategorized`) | 1,157 |
+| Kept with no genre, tags only generic (All only) | 103 |
+| Dropped: untagged, with a non-music word in the name | 58 |
+| Dropped: hard-exclude tag or name word | 538 |
 | Dropped: no genre | 226 |
 | Dropped: non-HTTPS stream | 0 |
-| Dropped: duplicate (same id, then same stream URL) | 11 |
+| Dropped: duplicate (same id, then same stream URL) | 19 |
 | Dropped: unreadable record | 0 |
 | Kept by name (no genre from tags) | 231 |
-| Kept with no genre (All only) | 103 |
-| With coordinates (shown on the map) | 998 |
-| Coordinates dropped (outside every US box) | 11 |
-| `stateCode` from ISO code | 164 |
-| `stateCode` from state text | 1,818 |
-| `stateCode` from coordinates in a state outline | 91 |
-| `stateCode` null | 659 |
+| With coordinates (shown on the map) | 1,187 |
+| Coordinates dropped (outside every US box) | 13 |
+| `stateCode` from ISO code | 168 |
+| `stateCode` from state text | 2,355 |
+| `stateCode` from coordinates in a state outline | 136 |
+| `stateCode` null | 1,255 |
 
 Genre counts (a station can count in more than one genre):
 
 | Genre | Stations | Genre | Stations |
 |---|---|---|---|
-| Rock | 609 | Latin & World | 168 |
-| Country | 229 | Christian & Gospel | 398 |
-| Pop | 477 | Indie & College | 231 |
-| Hip-Hop & R&B | 292 | Folk & Americana | 86 |
-| Jazz & Blues | 262 | Oldies | 376 |
-| Classical | 160 | Electronic | 312 |
+| Rock | 613 | Latin & World | 169 |
+| Country | 231 | Christian & Gospel | 399 |
+| Pop | 484 | Indie & College | 235 |
+| Hip-Hop & R&B | 297 | Folk & Americana | 86 |
+| Jazz & Blues | 263 | Oldies | 381 |
+| Classical | 159 | Electronic | 316 |
 
 Every genre has at least 30 stations, so none was dropped from the genre list.
 
@@ -63,11 +64,11 @@ File size (`public/catalog.json`):
 
 | | Bytes | KiB |
 |---|---|---|
-| Before the trim (2,689 stations, long keys, five tags, six-decimal coordinates) | 1,042,598 | 1,018 |
-| After the trim (2,721 stations) | 826,808 | 807.4 |
-| Gzip, after the trim (Node zlib, level 6) | 271,575 | 265.2 |
+| Before the uncategorized stations (2,721 stations, build of 2026-11-17) | 826,808 | 807.4 |
+| After (3,895 stations, build of 2026-11-18) | 1,112,640 | 1,086.6 |
+| Gzip, after (Node zlib, level 6) | 377,400 | 368.6 |
 
-The target was 900 KiB. The trim (short keys, coordinates to four decimals, three tags, no `codec` or `bitrate`) brought the file under it. Homepage query strings were left in place: they total under 1 KB.
+The target for this build was 1.4 MB raw. The file is under it, so no field was dropped. Earlier, the target was 900 KiB and the trim (short keys, coordinates to four decimals, three tags, no `codec` or `bitrate`) brought the file under that. Homepage query strings were left in place.
 
 ## Data quality notes
 
@@ -77,6 +78,7 @@ The target was 900 KiB. The trim (short keys, coordinates to four decimals, thre
 - The directory has coordinates for a minority of stations, and a few are wrong. The build drops a coordinate pair outside the US boxes instead of moving it (11 in this build). A swapped pair that stays inside a US box cannot be detected.
 - The directory's `state` text is free text. A state code is used only when it is an ISO code, an exact state name or abbreviation, or lies inside a state outline (see `docs/decisions.md`).
 - Stations with a stream that is only `http://` are not in the catalogue (the query asks for HTTPS streams, so this count is 0).
+- Uncategorized stations (no tags at all in the directory) are in the catalogue with no genre. The directory gives them no content description, so some are not music (talk, local or religious programming, and similar). Only names with a non-music word are kept out; see `docs/decisions.md`.
 
 ## Live checks made by the app's tests
 

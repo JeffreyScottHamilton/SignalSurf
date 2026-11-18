@@ -29,7 +29,13 @@ Only when the tags give no genre is the **name** used (`nameGenres`): a whole-wo
 - A hard-exclude word in the name blocks name admission (the tag list above plus `espn`, `npr`, `sermon`, `police`, `weather`, `traffic`, `scanner`, `bible`).
 - A decade word ("80s", "90's") does not admit a station when the name also holds a Christian network word (`Christian`, `K-LOVE`, `KLOVE`, `Air1`, `Salem`, `Moody`, `Family Radio`, `CCM`). Such a name is religious programming, not oldies.
 
-A station whose tags are only generic music words (`music`, `variety`, `eclectic`, `freeform`, `various`, `community radio` and similar, see `GENERIC_MUSIC_TAGS`) is kept with no genres: it shows under All only. Any other tags that give no genre, with no genre word in the name, drop the station as `no-genre`; a station with no tags at all is `untagged` and dropped. Reason: tags are what stations provide about themselves; names are a fallback that is only used when the tags say nothing, and the guards stop the fallback from admitting news, sermons or religious stations.
+A station whose tags are only generic music words (`music`, `variety`, `eclectic`, `freeform`, `various`, `community radio` and similar, see `GENERIC_MUSIC_TAGS`) is kept with no genres: it shows under All only. Any other tags that give no genre, with no genre word in the name, drop the station as `no-genre`. A station with no tags at all is kept as uncategorized (see the next section) unless its name holds a non-music word, in which case it is dropped as `untagged`. Reason: tags are what stations provide about themselves; names are a fallback that is only used when the tags say nothing, and the guards stop the fallback from admitting news, sermons or religious stations.
+
+## Untagged US stations are kept as uncategorized
+
+A US station with an HTTPS stream and no tags at all is kept with `genres: []` and the flag `uncategorized: true` (short key `y` in the file). It appears under All and in search only, and the list and map show "Genre not listed". It is not filtered by any genre chip. Reason: a large group of US stations had no evidence either way, and leaving them all out removed them without a check. Whether they are music is not known; the directory gives no content for them. Keeping them under All and in search, with a visible "Genre not listed", lets the user decide. In the 2026-11-18 query, 1,436 US https stations had no tags: 213 kept a genre from their name, 58 were dropped by the name check, and 1,165 became uncategorized (1,157 after dedupe).
+
+The cost is that some are not music. The directory gives no content for them, so talk, local, religious or spoken-word programming can be in this group. To limit that, an untagged station is still dropped when its name holds a whole word from this list: news, talk, sports, sport, scanner, police, fire, sheriff, ems, dispatch, weather, traffic, sermon(s), preaching, teaching, bible, church, ministry, ministries, podcast, comedy, audiobook(s), npr news, and the hard-exclude and name guards above. A name that states a genre ("Classic Rock 101") still gets that genre and is not uncategorized. This rule is in `classifyDetailed` (`src/catalog/rules.mjs`), and the build summary prints the uncategorized count and the untagged drops (`excluded by name`). Dedupe is unchanged.
 
 ## State and city: never guessed
 
@@ -44,7 +50,7 @@ A station whose tags are only generic music words (`music`, `variety`, `eclectic
 
 ## Catalogue format: short keys and rounding
 
-To fit the file under 900 KiB without dropping stations, records use short keys (`CATALOG_KEYS` in `src/catalog/rules.mjs`: `i` id, `n` name, `u` stream, `h` homepage, `f` favicon, `s` state, `c` city, `t` tags, `g` genres, `x` hls, `a` lat, `o` lng, `k` clicks). `expandCatalogRecord` maps them back to the `Station` field names in the loader (`src/catalog/catalog.ts`) and in the e2e checks. Coordinates are rounded to 4 decimals, tags are capped at 3, and `codec` and `bitrate` are not written because no screen or player reads them. Keys whose value is null, false or empty are left out. Reason: the file is loaded on every visit, and the key names were most of its size.
+To fit the file under 900 KiB without dropping stations, records use short keys (`CATALOG_KEYS` in `src/catalog/rules.mjs`: `i` id, `n` name, `u` stream, `h` homepage, `f` favicon, `s` state, `c` city, `t` tags, `g` genres, `x` hls, `a` lat, `o` lng, `y` uncategorized, `k` clicks). `expandCatalogRecord` maps them back to the `Station` field names in the loader (`src/catalog/catalog.ts`) and in the e2e checks. Coordinates are rounded to 4 decimals, tags are capped at 3, and `codec` and `bitrate` are not written because no screen or player reads them. Keys whose value is null, false or empty are left out. Reason: the file is loaded on every visit, and the key names were most of its size.
 
 ## Session and favourites are browser-local
 
@@ -59,7 +65,7 @@ The earlier app wrote `signalsurf:favorites:v1`, `signalsurf:history:v1` and `si
 - Below zoom 6 the map draws only the US: the state outlines from `us-atlas/states-10m.json` (`src/map/landData.ts`), a separate chunk loaded with a dynamic import. Everything outside them is the ocean colour. The world-atlas land layer was removed. From zoom 6 the imagery section below applies.
 - The map opens fitted to the lower 48 (`LOWER_48` in `mapController.tsx`). Pan bounds are `[14,-190]` to `[74,-60]` (`PAN_BASE`), so Alaska (the Aleutians reach -188), Hawaii and Puerto Rico are reachable and nothing else. The minimum zoom shows the whole US, centred.
 - The state borders get wider as the map zooms (`stateWeightFor` in `src/map/zoom.ts`): a hairline at the start view, at least about 1px from zoom 6.
-- Attribution: "Stations: Radio Browser · Map: US Census Bureau".
+- Attribution: "Stations: Radio Browser · Map: US Census Bureau", with the street credit after it ("Stations: Radio Browser · Map: US Census Bureau, USGS The National Map"; phones show "Radio Browser · US Census Bureau, USGS").
 - The minimum zoom is a whole number (`minZoomFor` in `src/map/zoom.ts`), rounded down so the whole US (from -188 to -64) fits the panel width. Reason: markercluster walks its grid from `minZoom - 1` but builds its top level at `floor(minZoom) - 1`. With a fractional minimum, stations that never cluster were dropped from the map; the grids are also rebuilt whenever the whole minimum changes.
 
 ## Map imagery: tiles from zoom 6, with a fallback
@@ -77,7 +83,7 @@ From zoom 6 a non-interactive mask dims land outside the US (a world rectangle w
 
 The marker clusters are rebuilt when the zoom range changes, because markercluster reads the map's minimum and maximum zoom only once, when the group is added.
 
-Attribution: the base credit is "Stations: Radio Browser · Map: US Census Bureau"; the active tile credit is added after it ("Map: USGS The National Map" for streets, or "Imagery: USGS" for satellite). On phones the street credit uses the short form, but it stays on screen.
+Attribution: the base credit is "Stations: Radio Browser · Map: US Census Bureau". The active tile credit follows it, separated by a comma (Leaflet's join): "USGS The National Map" for streets, or "Imagery: USGS" for satellite. So the streets line reads "Stations: Radio Browser · Map: US Census Bureau, USGS The National Map". On phones the short forms are used ("Radio Browser · US Census Bureau, USGS"), and the credit stays on screen.
 
 ## Search and the list are local
 

@@ -13,6 +13,7 @@ export interface Station {
   city: string | null;        // city as written in the directory, when a state was found with it
   tags: string[];             // lower case, trimmed, max 3 in the catalogue
   genres: Genre[];            // may be empty for bare "music" / "variety" stations
+  uncategorized?: boolean;    // no tags at all in the directory: genres [] and shown as "Genre not listed"; absent = false
   codec: string | null;
   bitrate: number | null;     // kbps, null when unknown
   hls: boolean;

@@ -77,5 +77,6 @@ export function sanitizeStation(v: unknown): Station | null {
     coords: coordsOf(v.coords),
     clickCount: nonNegative(v.clickCount),
     ...(legacy !== null ? { legacyLocation: legacy } : {}),
+    ...(v.uncategorized === true ? { uncategorized: true } : {}),
   };
 }

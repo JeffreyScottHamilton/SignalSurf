@@ -882,9 +882,14 @@ async function main() {
       expect(topo.length > 0, 'no USGSTopo tile requests at zoom 11');
       const other = urls.find((u) => !u.includes('basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/'));
       expect(!other, `non-USGSTopo tile request in streets mode: ${other}`);
-      const attr = await attribution();
-      expect(attr.includes('Stations: Radio Browser') && attr.includes('Map: US Census Bureau'), `base credit missing: ${attr}`);
-      expect(attr.includes('USGS') && attr.includes('The National Map'), `street credit missing: ${attr}`);
+      // The visible credit line (innerText skips the form CSS hides; the phone form is under 768px wide).
+      const shown = await page.locator('.leaflet-control-attribution').innerText();
+      const wide = (page.viewportSize()?.width ?? 1440) >= 768;
+      const want = wide
+        ? 'Stations: Radio Browser · Map: US Census Bureau, USGS The National Map'
+        : 'Radio Browser · US Census Bureau, USGS';
+      expect(shown.includes(want), `street credit wrong (want "${want}"): ${shown}`);
+      expect(!shown.includes('Map: USGS') && !shown.includes('Map: US Census Bureau, Map:'), `duplicated "Map:" in credit: ${shown}`);
       expect((await page.locator('.ss-map__status', { hasText: 'Detailed map unavailable' }).count()) === 0, 'unavailable chip shown while tiles load');
       return `${topo.length} USGSTopo tile requests at zoom ${(await mapZoom()).toFixed(1)}`;
     });

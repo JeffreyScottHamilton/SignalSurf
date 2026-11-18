@@ -136,6 +136,16 @@ const NAME_HARD_EXCLUDES = [
 const NAME_WORD_PADDED = Object.fromEntries(GENRES.map((g) => [g, NAME_GENRES[g].map(padded)]));
 const NAME_HARD_PADDED = NAME_HARD_EXCLUDES.map(padded);
 const DECADE_PADDED = NAME_GENRES.oldies.map(padded);
+/**
+ * Name words that block an untagged station (no tags at all) from being kept as uncategorized.
+ * Whole words. Checked with NAME_HARD_EXCLUDES, which the name genre rule also uses.
+ */
+const UNCATEGORIZED_EXCLUDES = [
+  'news', 'talk', 'sports', 'sport', 'scanner', 'police', 'fire', 'sheriff', 'ems', 'dispatch', 'weather',
+  'traffic', 'sermon', 'sermons', 'preaching', 'teaching', 'bible', 'church', 'ministry', 'ministries',
+  'podcast', 'comedy', 'audiobook', 'audiobooks', 'npr news',
+];
+const UNCATEGORIZED_PADDED = [...NAME_HARD_EXCLUDES, ...UNCATEGORIZED_EXCLUDES].map(padded);
 /** Christian network names. A decade word next to one of these ("K-LOVE 80s Hits") is not oldies evidence. */
 const CHRISTIAN_NETWORK_PADDED = ['christian', 'k love', 'klove', 'air1', 'air 1', 'salem', 'moody', 'family radio', 'ccm'].map(padded);
 
@@ -153,8 +163,9 @@ export function nameGenres(name) {
 /**
  * Classifies a station from its raw tags and, when the tags give no genre, its name.
  * Returns { reason, genres, by }: reason is null when the station is kept, otherwise
- * 'untagged' | 'hard-exclude' | 'no-genre'. genres is in GENRES order. by is 'tags' or 'name'
- * for kept stations (build summary only, never written to the catalogue).
+ * 'untagged' | 'hard-exclude' | 'no-genre'. genres is in GENRES order. by is 'tags', 'name' or
+ * 'uncategorized' for kept stations (build summary only; 'uncategorized' is written as the
+ * catalogue flag `uncategorized`).
  * classifyStation(tags, name) is the same without `by`.
  *
  * Tags: each tag is either a hard exclude (X), a genre tag (G), a generic music tag, or unknown.
@@ -163,6 +174,8 @@ export function nameGenres(name) {
  *   - G = 0, X = 0, and at least one generic tag: kept with genres [] (All only).
  * Name (only when no genre came from the tags): whole-word genre keywords admit the station,
  * unless the name holds a hard-exclude word.
+ * No tags at all, and no genre from the name: kept as uncategorized (genres [], by 'uncategorized'),
+ * unless the name holds a hard-exclude or non-music word (then 'untagged'). Some of these may not be music.
  */
 export function classifyDetailed(tags, name = '') {
   const folded = (Array.isArray(tags) ? tags : [])
@@ -199,7 +212,11 @@ export function classifyDetailed(tags, name = '') {
   const byName = nameGenres(name);
   if (!byName.hard && byName.genres.length > 0) return { reason: null, genres: byName.genres, by: 'name' };
   if (generic) return { reason: null, genres: [], by: 'tags' };
-  if (folded.length === 0) return { reason: 'untagged', genres: [], by: null };
+  if (folded.length === 0) {
+    const sp = padded(typeof name === 'string' ? name : '');
+    if (UNCATEGORIZED_PADDED.some((kw) => sp.includes(kw))) return { reason: 'untagged', genres: [], by: null };
+    return { reason: null, genres: [], by: 'uncategorized' };
+  }
   return { reason: 'no-genre', genres: [], by: null };
 }
 
@@ -411,6 +428,7 @@ export function normalizeRaw(raw, polygonState) {
     genres: cls.genres,
     hls: raw.hls === 1 || raw.hls === '1' || raw.hls === true,
     ...(coords ? { lat: round4(coords.lat), lng: round4(coords.lng) } : {}),
+    ...(cls.by === 'uncategorized' ? { uncategorized: true } : {}),
     clickCount: Math.max(0, finite(raw.clickcount) ?? 0),
   };
   return { station, reason: null, by: cls.by, stateSource: stateSource ?? 'null', coordsDropped };
@@ -472,6 +490,7 @@ export const CATALOG_KEYS = {
   hls: 'x',
   lat: 'a',
   lng: 'o',
+  uncategorized: 'y',
   clickCount: 'k',
 };
 

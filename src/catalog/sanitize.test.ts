@@ -73,6 +73,13 @@ describe('sanitizeStation', () => {
     expect(s).toMatchObject({ stateCode: null, city: null });
   });
 
+  it('keeps the uncategorized flag when true, and omits it otherwise', () => {
+    expect(sanitizeStation(valid({ uncategorized: true }))?.uncategorized).toBe(true);
+    expect(sanitizeStation(valid({ uncategorized: 'yes' }))).not.toHaveProperty('uncategorized');
+    expect(sanitizeStation(valid({ uncategorized: false }))).not.toHaveProperty('uncategorized');
+    expect(sanitizeStation(valid({}))).not.toHaveProperty('uncategorized');
+  });
+
   it('keeps the migrated legacy location text when present, and omits it otherwise', () => {
     expect(sanitizeStation(valid({ legacyLocation: ' Oslo, Norway ' }))?.legacyLocation).toBe('Oslo, Norway');
     expect(sanitizeStation(valid({ legacyLocation: '  ' }))).not.toHaveProperty('legacyLocation');

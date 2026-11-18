@@ -32,6 +32,7 @@ export function MapPopupCard({ station }: { station: Station }) {
             {station.name}
           </div>
           {location && <div className="ss-map-card__loc">{location}</div>}
+          {station.uncategorized && <div className="ss-map-card__loc">Genre not listed</div>}
         </div>
         <IconButton
           label={isFav ? 'Remove from favorites' : 'Add to favorites'}
