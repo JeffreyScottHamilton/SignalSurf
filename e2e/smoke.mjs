@@ -945,7 +945,14 @@ async function main() {
       const zoomBefore = await mapZoom();
       await page.locator('.ss-sheet-handle').click();
       await page.waitForTimeout(400);
-      await page.locator('.ss-list__scroll .ss-station-row').nth(3).click();
+      // The first station in list order (clicks, the catalogue file order) that has coordinates, so it can zoom.
+      const catalog = await (await fetch(new URL('catalog.json', baseUrl))).json();
+      const located = catalog.stations.map(expandCatalogRecord).findIndex((s) => typeof s.lat === 'number' && typeof s.lng === 'number');
+      expect(located >= 0, 'no catalogue station has coordinates');
+      const row = page.locator('.ss-list__scroll .ss-station-row').nth(located);
+      const wantName = expandCatalogRecord(catalog.stations[located]).name;
+      expect((await row.locator('.ss-station-row__name').innerText()).trim() === wantName, `row ${located} is not "${wantName}"`);
+      await row.click();
       await page.waitForTimeout(1800);
       const zoomAfter = await mapZoom();
       expect(zoomAfter > zoomBefore, `zoom stayed at ${zoomBefore} after the pick (now ${zoomAfter})`);
