@@ -29,9 +29,6 @@ export function StationRow({ station, selected, playing, onActivate, meta, trail
         {location && <span className="ss-station-row__location">{location}</span>}
       </span>
       {meta !== undefined && meta !== null && <span className="ss-station-row__meta">{meta}</span>}
-      {(meta === undefined || meta === null) && station.uncategorized && (
-        <span className="ss-station-row__meta">Genre not listed</span>
-      )}
       {trailing ?? (
         <SignalIcon className={playing ? 'ss-station-row__signal ss-station-row__signal--playing' : 'ss-station-row__signal'} />
       )}
