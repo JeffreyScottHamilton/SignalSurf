@@ -20,6 +20,8 @@ export interface CuratedEntry {
   source: string;
   verified: string;
   coordsSource: string;
+  /** Radio Browser stationuuid of a directory station this entry corrects; the entry takes its place. */
+  replaces?: string | null;
 }
 
 export declare function streamKey(url: string): string;
@@ -35,4 +37,12 @@ export declare function mergeCurated(
   radioStations: CatalogRecord[],
   curated: { entry: CuratedEntry; result: NormalizeResult }[],
   radioStreamKeys: ReadonlySet<string>,
-): { stations: CatalogRecord[]; added: number; skipped: string[]; dropped: Partial<Record<DropReason, number>> };
+  rawRows?: readonly unknown[],
+): {
+  stations: CatalogRecord[];
+  added: number;
+  skipped: string[];
+  dropped: Partial<Record<DropReason, number>>;
+  replaced: string[];
+  missing: string[];
+};

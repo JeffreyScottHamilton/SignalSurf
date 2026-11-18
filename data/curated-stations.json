@@ -18,6 +18,23 @@
       "source": "Stream URL from the station's official player at live.mystreamplayer.com/kbzn, which is linked from https://www.kbzn.com. Checked 2026-11-18: GET returns 200, Content-Type audio/aac, Access-Control-Allow-Origin *, decodes as AAC-LC 44.1 kHz stereo. Codec and bitrate from the mount name (96 kbps).",
       "verified": "2026-11-18",
       "coordsSource": "City-centre coordinates of Salt Lake City from the Wikipedia article \"Salt Lake City\" (40.7608, -111.8910). These are NOT the transmitter location. The station is licensed to Ogden and its studios are downtown Salt Lake City."
+    },
+    {
+      "id": "curated:ksfi",
+      "replaces": "b0dc24e6-1484-41e8-a18e-25f33aa4dd9c",
+      "name": "FM100.3 KSFI",
+      "streamUrl": "https://bonneville.cdnstream1.com/2702_48.aac",
+      "homepage": "https://fm100.com/",
+      "state": "Utah",
+      "city": "Salt Lake City",
+      "tags": ["adult contemporary"],
+      "codec": "AAC",
+      "bitrate": 48,
+      "lat": 40.7608,
+      "lng": -111.891,
+      "source": "Radio Browser record b0dc24e6-1484-41e8-a18e-25f33aa4dd9c (FM100.3 - Better Music Better Work Day) with its query string removed. The directory URL carried another listener's session id and coordinates, so the clean mount is used instead. Checked 2026-11-18: GET returns 200, Content-Type audio/aacp, Access-Control-Allow-Origin *, icy-name \"Bonneville - KSFIFM\" (the server confirms KSFI-FM), decodes as AAC-LC 24 kHz mono. Codec and bitrate from the mount name (48 kbps). Format from Wikipedia (KSFI): adult contemporary. fm100.com returns 403 to automated requests, so it was not read.",
+      "verified": "2026-11-18",
+      "coordsSource": "City-centre coordinates of Salt Lake City, the same point as NOW 97.9 KBZN (40.7608, -111.8910). These are NOT the transmitter location."
     }
   ]
 }

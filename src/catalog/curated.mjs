@@ -10,6 +10,8 @@ import { inUsBox, normalizeRaw, parseStateText } from './rules.mjs';
 
 /** Curated ids: "curated:" then lower-case letters, digits and hyphens. */
 export const CURATED_ID_RE = /^curated:[a-z0-9][a-z0-9-]*$/;
+/** A Radio Browser stationuuid, lower-case as the directory writes it. */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
@@ -45,6 +47,9 @@ export function checkCuratedEntry(e) {
   if (!Array.isArray(e.tags) || e.tags.length === 0 || !e.tags.every((t) => nonEmpty(t) && !t.includes(','))) {
     problems.push('tags must be a non-empty list of tag strings (no commas)');
   }
+  if (e.replaces != null && !(typeof e.replaces === 'string' && UUID_RE.test(e.replaces))) {
+    problems.push('replaces must be a Radio Browser stationuuid (lower-case uuid)');
+  }
   if (e.codec != null && !nonEmpty(e.codec)) problems.push('codec must be a non-empty string');
   if (e.bitrate != null && !(typeof e.bitrate === 'number' && Number.isFinite(e.bitrate) && e.bitrate > 0)) {
     problems.push('bitrate must be a positive number');
@@ -79,12 +84,14 @@ export function parseCurated(doc) {
   }
   const ids = new Set();
   const keys = new Set();
+  const replaced = new Set();
   doc.stations.forEach((e, i) => {
     const label = `stations[${i}]${typeof e?.id === 'string' ? ` (${e.id})` : ''}`;
     const problems = checkCuratedEntry(e);
     if (problems.length === 0) {
       if (ids.has(e.id)) problems.push('duplicate id');
       if (keys.has(streamKey(e.streamUrl))) problems.push('duplicate stream URL');
+      if (e.replaces != null && replaced.has(e.replaces)) problems.push('duplicate replaces');
     }
     if (problems.length > 0) {
       for (const p of problems) errors.push(`${label}: ${p}`);
@@ -92,6 +99,7 @@ export function parseCurated(doc) {
     }
     ids.add(e.id);
     keys.add(streamKey(e.streamUrl));
+    if (e.replaces != null) replaced.add(e.replaces);
     stations.push(e);
   });
   return { stations, errors };
@@ -133,18 +141,61 @@ export function radioBrowserStreamKeys(rows) {
   return keys;
 }
 
+/** Clicks of a Radio Browser row, as the catalogue stores them: a finite number, never negative. */
+const clicksOf = (row) => (typeof row.clickcount === 'number' && Number.isFinite(row.clickcount) ? Math.max(0, row.clickcount) : 0);
+
 /**
- * Adds the curated stations after the Radio Browser stations. A curated entry is skipped when its stream
- * key is in radioStreamKeys (Radio Browser wins). A curated entry that the music or https rules drop is
- * counted in dropped, by reason, and not added.
- * Returns { stations, added, skipped: [id], dropped: { reason: count } }.
+ * Adds the curated stations after the Radio Browser stations.
+ *
+ * Replacement (an entry with `replaces`, a Radio Browser stationuuid): when that uuid is in rawRows, the
+ * curated record takes the place of the directory station. It keeps the uuid as its id, so favourites and
+ * history still match, and the directory clickCount. Click reports still go to Radio Browser. Such an entry
+ * is not checked against radioStreamKeys, but it is skipped when another directory row (a different uuid)
+ * lists the same stream, and the music or https rules still apply: when they drop it, the directory
+ * station stays and the drop is counted. When the uuid is not in rawRows, the entry is added as a normal
+ * curated station (id curated:<slug>) and listed in missing, for a warning.
+ *
+ * A normal entry is skipped when its stream key is in radioStreamKeys (Radio Browser wins). A curated entry
+ * that the music or https rules drop is counted in dropped, by reason, and not added.
+ * Returns { stations, added, skipped: [id], dropped: { reason: count }, replaced: [uuid], missing: [id] }.
+ * rawRows is optional; without it no entry is a replacement and every entry is treated as normal.
  */
-export function mergeCurated(radioStations, curated, radioStreamKeys) {
+export function mergeCurated(radioStations, curated, radioStreamKeys, rawRows = []) {
   const stations = [...radioStations];
   const skipped = [];
   const dropped = {};
+  const replaced = [];
+  const missing = [];
   let added = 0;
+  const rawById = new Map();
+  for (const r of rawRows) {
+    if (r && typeof r === 'object' && typeof r.stationuuid === 'string') rawById.set(r.stationuuid, r);
+  }
   for (const { entry, result } of curated) {
+    if (entry.replaces != null) {
+      const row = rawById.get(entry.replaces);
+      if (row === undefined) {
+        missing.push(entry.id);
+      } else {
+        if (result.reason) {
+          dropped[result.reason] = (dropped[result.reason] ?? 0) + 1;
+          continue;
+        }
+        const key = streamKey(entry.streamUrl);
+        const otherListsIt = rawRows.some(
+          (r) => r && typeof r === 'object' && r.stationuuid !== entry.replaces && radioBrowserStreamKeys([r]).has(key),
+        );
+        if (otherListsIt) {
+          skipped.push(entry.id);
+          continue;
+        }
+        const at = stations.findIndex((s) => s.id === entry.replaces);
+        if (at >= 0) stations.splice(at, 1);
+        stations.push({ ...result.station, id: entry.replaces, clickCount: clicksOf(row) });
+        replaced.push(entry.replaces);
+        continue;
+      }
+    }
     if (radioStreamKeys.has(streamKey(entry.streamUrl))) {
       skipped.push(entry.id);
       continue;
@@ -156,5 +207,5 @@ export function mergeCurated(radioStations, curated, radioStreamKeys) {
     stations.push(result.station);
     added += 1;
   }
-  return { stations, added, skipped, dropped };
+  return { stations, added, skipped, dropped, replaced, missing };
 }

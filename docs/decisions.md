@@ -107,11 +107,26 @@ Radio Browser does not list every station a listener wants. For a station the di
 
 - The catalogue is the only source of stations, so a station that matters must be in the file, and a hand-curated list is the simplest way to add one without a second source.
 - A curated entry goes through the same rules as a directory record (https stream, music tags, US coordinates, state text), so it cannot bypass the music or https rules.
-- Radio Browser wins on a shared stream, so the directory's record and its counts are never replaced by a hand-made copy.
+- Radio Browser wins on a shared stream, so the directory's record and its counts are never replaced by a hand-made copy, unless the entry names the record in `replaces` (next section).
 - Only an official stream link checked by hand is accepted. A guessed or third-party stream would be a stream the app cannot stand behind.
 - An invalid entry fails the build. A silent skip would hide the mistake.
 
 Coordinates in the file are city-centre coordinates unless the entry says otherwise, and `coordsSource` states which. A city-centre point is not the transmitter, so the marker is approximate. Details and the list: `docs/data-source.md`, "Curated stations".
+
+## A curated entry may correct a directory station, keeping its uuid
+
+Some directory records are wrong and cannot be fixed by the rules. FM100.3 KSFI's record has a stream URL with another listener's session id and coordinates, no tags (so no genre and no map pin), and no coordinates. Deleting the record would lose the station's id and click count, and leaving it would keep a bad stream in the app.
+
+So a curated entry can set `replaces` to the directory's uuid. The entry takes the directory station's place, keeps the uuid as the station id and the directory's click count, and still reports clicks to Radio Browser.
+
+Reasons:
+
+- Favourites and history store the id. Keeping the uuid means a listener's saved station still matches after the correction.
+- The corrected station is still a directory station, so clicks belong to the directory. A new `curated:` id would have lost them.
+- The correction goes through the same rules as any curated entry. A correction the music or https rules drop does not remove the directory record.
+- A uuid that is missing from the fetch does not fail the build. The entry is added as `curated:<slug>` and the build prints a warning, so the mistake is visible.
+
+Details: `docs/data-source.md`, "Corrections: replaces".
 
 ## HTTP streams are upgraded only on hosts that serve HTTPS
 

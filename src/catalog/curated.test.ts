@@ -108,6 +108,26 @@ describe('curated file: validation', () => {
     expect(checkCuratedEntry(e).length).toBeGreaterThan(0);
   });
 
+  it('rejects a replaces value that is not a lower-case Radio Browser uuid', () => {
+    for (const bad of ['b0dc24e6', 'B0DC24E6-1484-41E8-A18E-25F33AA4DD9C', 'curated:kbzn', 'b0dc24e6-1484-41e8-a18e-25f33aa4dd9']) {
+      expect(checkCuratedEntry(entry({ replaces: bad }))).toEqual([
+        'replaces must be a Radio Browser stationuuid (lower-case uuid)',
+      ]);
+    }
+    expect(checkCuratedEntry(entry({ replaces: 'b0dc24e6-1484-41e8-a18e-25f33aa4dd9c' }))).toEqual([]);
+  });
+
+  it('rejects a repeated replaces', () => {
+    const uuid = 'b0dc24e6-1484-41e8-a18e-25f33aa4dd9c';
+    const parsed = parseCurated(
+      doc([
+        entry({ replaces: uuid }),
+        entry({ id: 'curated:other', streamUrl: 'https://stream.test/other.mp3', replaces: uuid }),
+      ]),
+    );
+    expect(parsed.errors).toEqual(['stations[1] (curated:other): duplicate replaces']);
+  });
+
   it('rejects a bad id, a non-date verified and a state with a city', () => {
     expect(checkCuratedEntry(entry({ id: 'kbzn' }))).toEqual(['id must look like "curated:kbzn"']);
     expect(checkCuratedEntry(entry({ verified: '18/11/2026' }))).toEqual(['verified must be a date, YYYY-MM-DD']);
@@ -229,6 +249,15 @@ describe('mergeCurated', () => {
     expect(merged.stations).toEqual([]);
   });
 
+  it('a curated entry without replaces still loses to the directory on a stream match', () => {
+    const rows = [rbRow({ stationuuid: 'rb-kbzn-uuid-0002', url: KBZN_STREAM, url_resolved: KBZN_STREAM })];
+    const rb = [rbStation(KBZN_STREAM, 'rb-kbzn-uuid-0002')];
+    const merged = mergeCurated(rb, curatedRecords([KBZN], null), radioBrowserStreamKeys(rows), rows);
+    expect(merged.skipped).toEqual(['curated:kbzn']);
+    expect(merged.replaced).toEqual([]);
+    expect(merged.stations.map((s) => s.id)).toEqual(['rb-kbzn-uuid-0002']);
+  });
+
   it('skips a station Radio Browser lists even when its rules dropped it', () => {
     const rows = [rbRow({ tags: 'news', url: KBZN_STREAM, url_resolved: KBZN_STREAM })];
     const merged = mergeCurated([], curatedRecords([KBZN], null), radioBrowserStreamKeys(rows));
@@ -242,3 +271,97 @@ describe('mergeCurated', () => {
     expect(merged.dropped).toEqual({ 'hard-exclude': 1 });
   });
 });
+
+describe('replaces: a curated entry corrects a directory station', () => {
+  const KSFI_UUID = 'b0dc24e6-1484-41e8-a18e-25f33aa4dd9c';
+  const KSFI_SESSION =
+    'https://bonneville.cdnstream1.com/2702_48.aac?aw_0_1st.playerid=Tuner&newListeningSessionID=abc_123&lat=37.4013952&lon=-122.0968448';
+  const KSFI_CLEAN = 'https://bonneville.cdnstream1.com/2702_48.aac';
+  // The directory record as it was on 2026-11-18: no tags, no coordinates, a session URL.
+  const ksfiRow = rbRow({
+    stationuuid: KSFI_UUID,
+    name: 'FM100.3 - Better Music Better Work Day',
+    url: KSFI_SESSION,
+    url_resolved: KSFI_SESSION,
+    homepage: 'https://fm100.com/',
+    tags: '',
+    iso_3166_2: null,
+    state: null,
+    clickcount: 2,
+    geo_lat: null,
+    geo_long: null,
+  });
+  const ksfi: CuratedEntry = {
+    ...KBZN,
+    id: 'curated:ksfi',
+    replaces: KSFI_UUID,
+    name: 'FM100.3 KSFI',
+    streamUrl: KSFI_CLEAN,
+    homepage: 'https://fm100.com/',
+    favicon: null,
+    tags: ['adult contemporary'],
+    codec: 'AAC',
+    bitrate: 48,
+  };
+  const directoryKsfi = () => {
+    const r = normalizeRaw(ksfiRow, null, null);
+    if (r.reason !== null) throw new Error('KSFI directory fixture dropped');
+    return r.station;
+  };
+  const directoryRock = () => {
+    const r = normalizeRaw(rbRow(), null, null);
+    if (r.reason !== null) throw new Error('rock fixture dropped');
+    return r.station;
+  };
+
+  it('keeps the uuid and the directory clickCount, and takes the curated fields', () => {
+    const rows = [ksfiRow, rbRow()];
+    const radio = dedupeCatalog([directoryKsfi(), directoryRock()]);
+    const merged = mergeCurated(radio, curatedRecords([ksfi], null), radioBrowserStreamKeys(rows), rows);
+    expect(merged.stations.filter((s) => s.id === KSFI_UUID)).toHaveLength(1);
+    expect(merged.stations.find((s) => s.id === KSFI_UUID)).toMatchObject({
+      id: KSFI_UUID,
+      name: 'FM100.3 KSFI',
+      streamUrl: KSFI_CLEAN,
+      homepage: 'https://fm100.com/',
+      stateCode: 'UT',
+      city: 'Salt Lake City',
+      genres: ['pop'],
+      lat: 40.7608,
+      lng: -111.891,
+      clickCount: 2,
+    });
+    expect(merged.replaced).toEqual([KSFI_UUID]);
+    expect(merged.missing).toEqual([]);
+    expect(merged.added).toBe(0);
+    expect(JSON.stringify(merged.stations)).not.toMatch(/newListeningSessionID/);
+  });
+
+  it('falls back to a curated: id, and reports it as missing, when the uuid is not in the fetch', () => {
+    const merged = mergeCurated([], curatedRecords([ksfi], null), new Set(), [rbRow()]);
+    expect(merged.missing).toEqual(['curated:ksfi']);
+    expect(merged.replaced).toEqual([]);
+    expect(merged.added).toBe(1);
+    expect(merged.stations.map((s) => s.id)).toEqual(['curated:ksfi']);
+  });
+
+  it('does not replace when another directory row lists the clean stream; the directory station stays', () => {
+    const other = rbRow({ stationuuid: 'rb-other-0003', url: KSFI_CLEAN, url_resolved: KSFI_CLEAN });
+    const rows = [ksfiRow, other];
+    const radio = dedupeCatalog([directoryKsfi()]);
+    const merged = mergeCurated(radio, curatedRecords([ksfi], null), radioBrowserStreamKeys(rows), rows);
+    expect(merged.skipped).toEqual(['curated:ksfi']);
+    expect(merged.replaced).toEqual([]);
+    expect(merged.stations.map((s) => s.id)).toEqual([KSFI_UUID]);
+  });
+
+  it('when the rules drop the replacement, the directory station stays and the drop is counted', () => {
+    const talk: CuratedEntry = { ...ksfi, tags: ['talk'] };
+    const rows = [ksfiRow];
+    const merged = mergeCurated([directoryKsfi()], curatedRecords([talk], null), radioBrowserStreamKeys(rows), rows);
+    expect(merged.dropped).toEqual({ 'hard-exclude': 1 });
+    expect(merged.replaced).toEqual([]);
+    expect(merged.stations.map((s) => s.streamUrl)).toEqual([KSFI_SESSION]);
+  });
+});
+

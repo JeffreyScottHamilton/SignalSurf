@@ -175,7 +175,11 @@ async function main() {
   }
   const radio = dedupeCatalog(kept);
   drop.duplicate = kept.length - radio.length;
-  const merge = mergeCurated(radio, curatedRecords(curatedEntries, polygonState), radioBrowserStreamKeys(raw));
+  const merge = mergeCurated(radio, curatedRecords(curatedEntries, polygonState), radioBrowserStreamKeys(raw), raw);
+  for (const id of merge.missing) {
+    const entry = curatedEntries.find((e) => e.id === id);
+    console.warn(`WARNING ${id} replaces ${entry.replaces}, which is not in the Radio Browser data; added as ${id} with no directory clicks.`);
+  }
   const unique = merge.stations;
 
   // Upgrade counts over the stations that are in the file (after dedupe).
@@ -234,6 +238,10 @@ async function main() {
   console.log(
     `curated (${curatedEntries.length} in ${curatedPath}): added ${merge.added}, ` +
       `skipped (Radio Browser has the stream) ${merge.skipped.length}, dropped by the rules ${droppedCurated}`,
+  );
+  console.log(
+    `curated replaces (directory station corrected, its id and clicks kept): ${merge.replaced.length}` +
+      (merge.replaced.length > 0 ? ` (${merge.replaced.join(', ')})` : ''),
   );
   console.log(`file ${outPath}: raw ${bytes} bytes (${(bytes / 1024).toFixed(0)} KiB), gzip ${gz} bytes`);
 }

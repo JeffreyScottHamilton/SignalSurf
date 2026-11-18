@@ -84,7 +84,7 @@ Rules:
 1. **Only official stream links, checked by hand.** An entry is added only when its stream URL was taken from the station's own site or official player and then checked by hand (the request, the content type and that it decodes). Do not add a stream from a directory, a guess, or a third-party aggregator. Record where the URL came from in `source`.
 2. **Same rules as Radio Browser.** Each entry is passed through `normalizeRaw` (`src/catalog/rules.mjs`) as a directory record: https stream, music tags (`classifyDetailed`), coordinates inside a US box, and state text (`parseStateText`). An entry the rules drop is counted in the build summary by reason and is not added.
 3. **https only.** An `http://` stream is rejected when the file is read. The build does not upgrade it.
-4. **Radio Browser wins.** A curated entry is skipped when any Radio Browser record lists the same stream (`http://` and `https://` count as the same stream). A station the rules dropped on the Radio Browser side still counts as listed.
+4. **Radio Browser wins.** A curated entry is skipped when any Radio Browser record lists the same stream (`http://` and `https://` count as the same stream). A station the rules dropped on the Radio Browser side still counts as listed. The exception is an entry with `replaces`, which corrects a directory station (see "Corrections: replaces").
 5. **Invalid file fails the build.** A missing field, a bad id, an http stream, a repeated id or stream, or coordinates that are 0,0, not numbers, out of range or outside the US, makes `npm run catalog` exit with an error that names each bad entry. Nothing is written.
 6. **Stable ids.** The id is `curated:<slug>`, lower-case letters, digits and hyphens (for example `curated:kbzn`). The app stores it in favourites and history like any id. The app's sanitiser needs 8 or more characters, and `curated:kbzn` has 12.
 
@@ -105,6 +105,7 @@ Fields (one object per station in the `stations` array; `schemaVersion` is 1):
 | `source` | yes | Where the stream URL came from and what was checked |
 | `verified` | yes | Date of the check, `YYYY-MM-DD` |
 | `coordsSource` | yes | Where the coordinates came from, and whether they are city-centre or transmitter |
+| `replaces` | no | Radio Browser `stationuuid` (lower-case uuid) of a directory station this entry corrects. See "Corrections: replaces" |
 
 ### How to add a station
 
@@ -114,6 +115,24 @@ Fields (one object per station in the `stations` array; `schemaVersion` is 1):
 4. Run `npm run catalog`. Check the summary line `curated (...): added 1`, then run `npm test`. The build fails if the entry is not valid.
 5. Commit `data/curated-stations.json` and `public/catalog.json` together.
 
+### Corrections: replaces
+
+Some directory records are wrong in ways the build cannot fix from the record alone: a stream URL that carries another listener's session id and coordinates, no tags (so no genre and no map pin), or no coordinates. An entry with `replaces` set to a Radio Browser `stationuuid` corrects that record.
+
+When the uuid is in the fetch:
+
+1. The curated entry takes the directory station's place. The directory record is removed, and the curated fields (name, clean `streamUrl`, homepage, state, city, tags, coordinates) are used.
+2. The station keeps the directory's uuid as its id, so favourites and history that already hold it still match. Its `clickCount` is the directory's.
+3. Click reports still go to Radio Browser (`reportClick` is not skipped), because the station is a directory station.
+4. The entry goes through the same rules as any curated entry. If the music or https rules drop it, the directory record stays, and the drop is counted in the summary line.
+5. If another directory row (a different uuid) lists the same clean stream, the replacement is skipped and counted as skipped. The directory's other record wins, as in rule 4 above.
+
+When the uuid is not in the fetch, the build does not fail. The entry is added as a normal curated station with id `curated:<slug>`, and a `WARNING` line names the entry and the missing uuid.
+
+Validation: `replaces` must be a lower-case uuid (`checkCuratedEntry`). A repeated `replaces` in the file is an error. Without `replaces`, the rules above are unchanged: the directory wins on a stream match.
+
+The build summary has a line `curated replaces (...): N (uuid, ...)`. The build with the KSFI entry (2026-11-18, after the directory had changed since the table above): raw 7,004 records, kept 4,420 in the file, of which one is a curated station (KBZN) and one is the KSFI correction, which is a directory station. Utah (`UT`) has 32 stations, including KBZN and KSFI. KSFI is in the file as `curated:ksfi`, replacing `b0dc24e6-1484-41e8-a18e-25f33aa4dd9c`.
+
 ### Current entries
 
 | id | Station | Stream | Checked | Coordinates |
@@ -121,6 +140,10 @@ Fields (one object per station in the `stations` array; `schemaVersion` is 1):
 | `curated:kbzn` | NOW 97.9 KBZN, Salt Lake City (licensed to Ogden) | `https://capitalslc.cdnstream1.com/2283_96.aac` (AAC, about 96 kbps, from the station's player at `live.mystreamplayer.com/kbzn`, linked from `https://www.kbzn.com`) | 2026-11-18: 200, `audio/aac`, `Access-Control-Allow-Origin: *`, decodes as AAC-LC 44.1 kHz stereo | City centre of Salt Lake City, `40.7608, -111.8910`, from the Wikipedia article. **Not the transmitter location.** |
 
 KBZN is in the catalogue as format "hot adult contemporary", which the tag rules map to Pop, state Utah (`UT`), city Salt Lake City, with the coordinates above. Its catalogue record has no click count.
+
+| `curated:ksfi` (replaces `b0dc24e6-1484-41e8-a18e-25f33aa4dd9c`) | FM100.3 KSFI, Salt Lake City | `https://bonneville.cdnstream1.com/2702_48.aac` (AAC, 48 kbps from the mount name; the directory's URL with its query string removed, which carried another listener's session id and coordinates) | 2026-11-18: 200, `audio/aacp`, `Access-Control-Allow-Origin: *`, icy-name `Bonneville - KSFIFM`, decodes as AAC-LC 24 kHz mono. `fm100.com` returns 403 to automated requests, so it was not read | City centre of Salt Lake City, `40.7608, -111.8910`, the same point as KBZN. **Not the transmitter location.** Format "adult contemporary" from Wikipedia (KSFI) |
+
+KSFI keeps the directory uuid and its click count. Before the correction it had no coordinates and no tags, so it was not on the map and was listed as uncategorized.
 
 Limits: the stream was checked once, on 2026-11-18. The app does not re-check curated streams. The map and About panel credit Radio Browser for the station data; a curated station is not from Radio Browser, and the credit does not say so yet.
 

@@ -13,6 +13,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CURATED_FILE = join(ROOT, 'data', 'curated-stations.json');
 const BUILD = join(ROOT, 'scripts', 'build-catalog.mjs');
 const KBZN_STREAM = 'https://capitalslc.cdnstream1.com/2283_96.aac';
+const KSFI_UUID = 'b0dc24e6-1484-41e8-a18e-25f33aa4dd9c';
+const KSFI_CLEAN = 'https://bonneville.cdnstream1.com/2702_48.aac';
+const KSFI_SESSION = `${KSFI_CLEAN}?aw_0_1st.playerid=Tuner&newListeningSessionID=abc_123&lat=37.4013952&lon=-122.0968448`;
 
 function rbRow(extra = {}) {
   return {
@@ -64,6 +67,24 @@ const fileEntry = (extra = {}) => ({
 });
 
 describe('data/curated-stations.json', () => {
+  it('is valid and holds KSFI as a correction of the directory station, with its verified fields', () => {
+    const parsed = parseCurated(JSON.parse(readFileSync(CURATED_FILE, 'utf8')));
+    const ksfi = parsed.stations.find((s) => s.id === 'curated:ksfi');
+    expect(ksfi).toMatchObject({
+      replaces: KSFI_UUID,
+      name: 'FM100.3 KSFI',
+      streamUrl: KSFI_CLEAN,
+      homepage: 'https://fm100.com/',
+      state: 'Utah',
+      city: 'Salt Lake City',
+      tags: ['adult contemporary'],
+      lat: 40.7608,
+      lng: -111.891,
+      verified: '2026-11-18',
+    });
+    expect(ksfi.favicon).toBeUndefined();
+  });
+
   it('is valid and holds KBZN with its verified fields', () => {
     const parsed = parseCurated(JSON.parse(readFileSync(CURATED_FILE, 'utf8')));
     expect(parsed.errors).toEqual([]);
@@ -89,10 +110,54 @@ describe('build-catalog with curated stations', () => {
     const { log, catalog } = build([rbRow()]);
     const kbzn = catalog.stations.find((s) => s.i === 'curated:kbzn');
     expect(kbzn).toMatchObject({ n: 'NOW 97.9 KBZN', u: KBZN_STREAM, s: 'UT', c: 'Salt Lake City', a: 40.7608, o: -111.891 });
-    expect(catalog.count).toBe(2);
+    expect(catalog.count).toBe(3);
     expect(log).toMatch(
-      /curated \(1 in .*\): added 1, skipped \(Radio Browser has the stream\) 0, dropped by the rules none/,
+      /curated \(2 in .*\): added 2, skipped \(Radio Browser has the stream\) 0, dropped by the rules none/,
     );
+  });
+
+  it('replaces the directory KSFI record with the clean stream, keeping its uuid and clicks; no record holds the session URL', () => {
+    const ksfiRow = rbRow({
+      stationuuid: KSFI_UUID,
+      name: 'FM100.3 - Better Music Better Work Day',
+      url: KSFI_SESSION,
+      url_resolved: KSFI_SESSION,
+      homepage: 'https://fm100.com/',
+      tags: '',
+      iso_3166_2: null,
+      state: null,
+      clickcount: 2,
+      geo_lat: null,
+      geo_long: null,
+    });
+    const { log, catalog } = build([ksfiRow, rbRow()]);
+    const ksfi = catalog.stations.find((s) => s.i === KSFI_UUID);
+    expect(ksfi).toMatchObject({
+      n: 'FM100.3 KSFI',
+      u: KSFI_CLEAN,
+      h: 'https://fm100.com/',
+      s: 'UT',
+      c: 'Salt Lake City',
+      t: ['adult contemporary'],
+      g: ['pop'],
+      a: 40.7608,
+      o: -111.891,
+      k: 2,
+    });
+    expect(ksfi.y).toBeUndefined();
+    expect(catalog.stations.find((s) => s.i === 'curated:ksfi')).toBeUndefined();
+    expect(catalog.stations.filter((s) => s.u === KSFI_CLEAN)).toHaveLength(1);
+    expect(JSON.stringify(catalog)).not.toMatch(/newListeningSessionID|lat=37\.4/);
+    expect(catalog.count).toBe(3);
+    expect(log).toMatch(/curated replaces .*: 1 \(b0dc24e6-1484-41e8-a18e-25f33aa4dd9c\)/);
+    expect(log).not.toMatch(/WARNING/);
+  });
+
+  it('a KSFI entry whose uuid is not in the fetch is added as curated:ksfi, with a warning', () => {
+    const { log, catalog } = build([rbRow()]);
+    const ksfi = catalog.stations.find((s) => s.i === 'curated:ksfi');
+    expect(ksfi).toMatchObject({ n: 'FM100.3 KSFI', u: KSFI_CLEAN, s: 'UT', a: 40.7608, o: -111.891 });
+    expect(log).toMatch(/curated replaces .*: 0/);
   });
 
   it('skips a curated station whose stream Radio Browser already lists, and keeps the directory record', () => {
@@ -115,6 +180,23 @@ describe('build-catalog with curated stations', () => {
 });
 
 describe('the committed public/catalog.json', () => {
+  it('lists KSFI under its directory uuid with the clean stream, Utah, coordinates and pop, and no session URL', () => {
+    const built = JSON.parse(readFileSync(join(ROOT, 'public', 'catalog.json'), 'utf8'));
+    const found = built.stations.filter((s) => s.i === KSFI_UUID);
+    expect(found).toHaveLength(1);
+    expect(expandCatalogRecord(found[0])).toMatchObject({
+      id: KSFI_UUID,
+      name: 'FM100.3 KSFI',
+      streamUrl: KSFI_CLEAN,
+      homepage: 'https://fm100.com/',
+      stateCode: 'UT',
+      genres: ['pop'],
+      lat: 40.7608,
+      lng: -111.891,
+    });
+    expect(JSON.stringify(built)).not.toMatch(/newListeningSessionID|lat=37\.4/);
+  });
+
   it('lists KBZN as a Utah station with coordinates, and the app expands it', () => {
     const built = JSON.parse(readFileSync(join(ROOT, 'public', 'catalog.json'), 'utf8'));
     const found = built.stations.find((s) => s.i === 'curated:kbzn');
