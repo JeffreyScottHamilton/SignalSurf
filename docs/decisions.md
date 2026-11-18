@@ -101,6 +101,18 @@ The player (`src/audio/player.ts`) owns one `HTMLAudioElement`. Every change of 
 
 `hls.js` is imported only for a station marked `hls` or whose stream path ends in `.m3u8` (`needsHls`, then `import('hls.js')` in `src/audio/player.ts`). Plain streams never download it.
 
+## Curated stations: a small hand-checked list, merged after the directory
+
+Radio Browser does not list every station a listener wants. For a station the directory lacks, `data/curated-stations.json` holds a hand-checked entry, merged by `npm run catalog` (`src/catalog/curated.mjs`). Reasons:
+
+- The catalogue is the only source of stations, so a station that matters must be in the file, and a hand-curated list is the simplest way to add one without a second source.
+- A curated entry goes through the same rules as a directory record (https stream, music tags, US coordinates, state text), so it cannot bypass the music or https rules.
+- Radio Browser wins on a shared stream, so the directory's record and its counts are never replaced by a hand-made copy.
+- Only an official stream link checked by hand is accepted. A guessed or third-party stream would be a stream the app cannot stand behind.
+- An invalid entry fails the build. A silent skip would hide the mistake.
+
+Coordinates in the file are city-centre coordinates unless the entry says otherwise, and `coordsSource` states which. A city-centre point is not the transmitter, so the marker is approximate. Details and the list: `docs/data-source.md`, "Curated stations".
+
 ## HTTP streams are upgraded only on hosts that serve HTTPS
 
 The app is served over HTTPS, and a browser blocks `http:` audio on an HTTPS page (mixed content), so a catalogue stream must be `https:`. Before this change the directory query asked for HTTPS streams only (`is_https=true`), which hid many stations on servers that also serve HTTPS.

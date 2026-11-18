@@ -2,14 +2,18 @@
 // Builds public/catalog.json: the committed, pre-built US music station catalogue.
 // Run with `npm run catalog` (network). `npm run build` never fetches.
 //
-// Usage: node --use-env-proxy scripts/build-catalog.mjs [--raw <file.json>] [--out <file>]
-//   --raw  reuse a saved Radio Browser search response instead of fetching
-//   --out  output path (default public/catalog.json)
+// Usage: node --use-env-proxy scripts/build-catalog.mjs [--raw <file.json>] [--out <file>] [--curated <file.json>]
+//   --raw      reuse a saved Radio Browser search response instead of fetching
+//   --out      output path (default public/catalog.json)
+//   --curated  curated stations file (default data/curated-stations.json)
 //
 // Source: GET <server>/json/stations/search?countrycode=US&hidebroken=true
 //         &limit=100000&order=clickcount&reverse=true ; server from /json/servers, fallback de1/de2/fi1.
 // The query has no is_https filter. An http:// stream (or favicon) is upgraded to https:// only when its
 // host:port also serves an https stream in the same data (httpsHostKeys / upgradeHttpUrl); otherwise it is dropped.
+// Curated stations (data/curated-stations.json, src/catalog/curated.mjs) are hand-checked extra stations that
+// Radio Browser does not list. They are merged after the Radio Browser stations, through the same rules, and a
+// curated entry whose stream is already in the Radio Browser data is skipped. An invalid curated file fails the build.
 // Rules (genres, excludes, state parsing, coordinates) live in src/catalog/rules.mjs and are shared
 // with the unit tests.
 //
@@ -39,6 +43,12 @@ import {
   GENRES,
   CATALOG_KEYS,
 } from '../src/catalog/rules.mjs';
+import {
+  curatedRecords,
+  mergeCurated,
+  parseCurated,
+  radioBrowserStreamKeys,
+} from '../src/catalog/curated.mjs';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -51,6 +61,7 @@ const argOf = (name) => {
 };
 const rawPath = argOf('--raw');
 const outPath = resolve(root, argOf('--out') ?? 'public/catalog.json');
+const curatedPath = resolve(root, argOf('--curated') ?? 'data/curated-stations.json');
 
 const DISCOVERY = 'https://all.api.radio-browser.info/json/servers';
 const FALLBACK = ['de1', 'de2', 'fi1'].map((h) => `${h}.api.radio-browser.info`);
@@ -130,11 +141,19 @@ function compact(station) {
 
 const pct = (n, d) => (d === 0 ? '0.0' : ((100 * n) / d).toFixed(1));
 
+/** Reads the curated file. Throws, naming every bad entry, when the file is not valid. */
+function loadCurated() {
+  const { stations, errors } = parseCurated(JSON.parse(readFileSync(curatedPath, 'utf8')));
+  if (errors.length > 0) throw new Error(`invalid curated stations in ${curatedPath}:\n  ${errors.join('\n  ')}`);
+  return stations;
+}
+
 async function main() {
   const raw = await loadRaw();
   const shapes = loadStateShapes();
   const polygonState = (lng, lat) => stateAtPoint(lng, lat, shapes);
   const httpsKeys = httpsHostKeys(raw);
+  const curatedEntries = loadCurated();
 
   const drop = { junk: 0, 'non-https': 0, untagged: 0, 'hard-exclude': 0, 'no-genre': 0, duplicate: 0 };
   const sources = { iso: 0, name: 0, polygon: 0, null: 0 };
@@ -154,8 +173,10 @@ async function main() {
     if (r.upgraded.stream || r.upgraded.favicon) upgradedIds.set(r.station.id, r.upgraded);
     kept.push(r.station);
   }
-  const unique = dedupeCatalog(kept);
-  drop.duplicate = kept.length - unique.length;
+  const radio = dedupeCatalog(kept);
+  drop.duplicate = kept.length - radio.length;
+  const merge = mergeCurated(radio, curatedRecords(curatedEntries, polygonState), radioBrowserStreamKeys(raw));
+  const unique = merge.stations;
 
   // Upgrade counts over the stations that are in the file (after dedupe).
   const up = { musicStreams: 0, uncategorizedStreams: 0, favicons: 0 };
@@ -209,6 +230,11 @@ async function main() {
   console.log(`genre-less kept (All only): ${noGenre}`);
   console.log(`with coords: ${withCoords}; coords dropped as outside US: ${coordsDropped}`);
   console.log(`stateCode sources: iso ${sources.iso}, name ${sources.name}, polygon ${sources.polygon}, null ${sources.null}`);
+  const droppedCurated = Object.entries(merge.dropped).map(([r, n]) => `${r} ${n}`).join(', ') || 'none';
+  console.log(
+    `curated (${curatedEntries.length} in ${curatedPath}): added ${merge.added}, ` +
+      `skipped (Radio Browser has the stream) ${merge.skipped.length}, dropped by the rules ${droppedCurated}`,
+  );
   console.log(`file ${outPath}: raw ${bytes} bytes (${(bytes / 1024).toFixed(0)} KiB), gzip ${gz} bytes`);
 }
 

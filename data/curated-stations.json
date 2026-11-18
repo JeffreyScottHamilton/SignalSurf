@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "description": "Hand-curated stations merged into public/catalog.json by npm run catalog. Only stations whose official stream link was checked by hand. See docs/data-source.md (\"Curated stations\") for the rules and how to add one.",
+  "stations": [
+    {
+      "id": "curated:kbzn",
+      "name": "NOW 97.9 KBZN",
+      "streamUrl": "https://capitalslc.cdnstream1.com/2283_96.aac",
+      "homepage": "https://www.kbzn.com",
+      "favicon": "https://live.mystreamplayer.com/configs/images/kbzn_icon.png",
+      "state": "Utah",
+      "city": "Salt Lake City",
+      "tags": ["hot adult contemporary"],
+      "codec": "AAC",
+      "bitrate": 96,
+      "lat": 40.7608,
+      "lng": -111.891,
+      "source": "Stream URL from the station's official player at live.mystreamplayer.com/kbzn, which is linked from https://www.kbzn.com. Checked 2026-11-18: GET returns 200, Content-Type audio/aac, Access-Control-Allow-Origin *, decodes as AAC-LC 44.1 kHz stereo. Codec and bitrate from the mount name (96 kbps).",
+      "verified": "2026-11-18",
+      "coordsSource": "City-centre coordinates of Salt Lake City from the Wikipedia article \"Salt Lake City\" (40.7608, -111.8910). These are NOT the transmitter location. The station is licensed to Ogden and its studios are downtown Salt Lake City."
+    }
+  ]
+}

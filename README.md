@@ -36,7 +36,7 @@ npm run dev
 | `npm test` | `vitest run` | Unit tests (Vitest, jsdom) |
 | `npm run e2e` | `node e2e/smoke.mjs` | Browser smoke test against `npm run preview` on port 4173. Set `PK_BASE_URL` to test another server. Uses the Chromium that Playwright already has installed. |
 | `npm run e2e:live` | `node e2e/live-playback.mjs` | Real playback on four catalogue stations, one per stream host. Needs internet access to those hosts. Prints a table and `LIVE-PLAYBACK: n/4`. |
-| `npm run catalog` | `node --use-env-proxy scripts/build-catalog.mjs` | Rebuilds `public/catalog.json` from the Radio Browser directory. Needs network access. |
+| `npm run catalog` | `node --use-env-proxy scripts/build-catalog.mjs` | Rebuilds `public/catalog.json` from the Radio Browser directory and merges the hand-curated stations in `data/curated-stations.json`. Needs network access. |
 
 ### When to refresh the catalogue
 
@@ -54,6 +54,7 @@ Run `npm run build` and serve the static `dist/` folder from any static host.
 ## Data source and licences
 
 - **Stations:** the [Radio Browser](https://www.radio-browser.info/) community directory. Its site states that the data is in the public domain. The catalogue keeps stations whose stream is HTTPS, or HTTP on a host that also serves HTTPS in the directory (written as HTTPS; some may not play), and either a tag that maps to a music genre with no non-music tag, or no tags at all (kept as uncategorized, unless the name holds a non-music word). Details: [docs/data-source.md](docs/data-source.md).
+- **Curated stations:** a few stations the directory does not list are added by hand from `data/curated-stations.json`. Each one has its official stream link checked by hand, and goes through the same rules. Today there is one: NOW 97.9 KBZN, Salt Lake City. See [docs/data-source.md](docs/data-source.md#curated-stations).
 - **Map shapes:** US state outlines from the US Census Bureau through the `us-atlas` package (ISC licence in the package). Below zoom 6 the map draws only the US.
 - **Map imagery:** street tiles from USGS (`USGSTopo`, The National Map, dimmed with a CSS filter) and satellite tiles from USGS (`USGSImageryOnly`, no labels), requested only at zoom 6 and above. The terms for these tiles were not re-checked for this build; see [docs/licenses.md](docs/licenses.md) and [docs/decisions.md](docs/decisions.md).
 - **Libraries:** Leaflet, markercluster, React, hls.js, Inter and others. Their licences and the notices are in [docs/licenses.md](docs/licenses.md) and [public/THIRD-PARTY-NOTICES.txt](public/THIRD-PARTY-NOTICES.txt), which ships with the app.
@@ -62,7 +63,7 @@ The map and the About panel credit Radio Browser, the US Census Bureau, and the 
 
 ## Known limitations
 
-- **Only stations with coordinates appear on the map.** The catalogue has 4,418 stations and 1,298 of them have coordinates inside the US. The other stations are listed, searchable and playable, but they are never placed on the map.
+- **Only stations with coordinates appear on the map.** The catalogue has 4,419 stations and 1,299 of them have coordinates inside the US. The other stations are listed, searchable and playable, but they are never placed on the map.
 - **Genre filters are approximate.** They come from the free-text tags and station names that stations provide. A station can be missing from a genre, or in one it does not fit. A station whose tags give a genre is classified by its tags. Only when the tags give none is a whole-word genre in its name used, and a hard-exclude word in the name (news, sports, sermon, and similar) blocks that (see [docs/decisions.md](docs/decisions.md)).
 - **Uncategorized stations may not be music.** A US station with no tags at all in the directory is kept with no genre (1,253 in this build). It appears under All and in search only, and is marked "Genre not listed". Some are talk, local or religious programming. Names with a non-music word (news, sports, church, podcast and similar) are left out. Stations tagged only "music" or "variety" also appear under All only. See [docs/decisions.md](docs/decisions.md).
 - **Some streams fail in browsers.** Common causes are a codec the browser cannot decode (AAC is not in every browser), a stream that refuses browser playback, a region restriction, or a station that has gone offline. The player shows a message and a Try again button.

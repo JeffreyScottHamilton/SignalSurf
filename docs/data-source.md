@@ -30,7 +30,7 @@ Command: `npm run catalog` (exit 0). Source: de1.api.radio-browser.info. The que
 | Measure | Value |
 |---|---|
 | Raw US records returned | 7,002 |
-| Kept | 4,418 (63.1%) |
+| Kept | 4,418 (63.1%) from Radio Browser, plus 1 curated station (4,419 in the file; see "Curated stations") |
 | Kept as uncategorized (no tags at all; genres `[]`; marked `uncategorized`) | 1,253 |
 | Kept with no genre, tags only generic (All only) | 128 |
 | Kept with an http stream upgraded to https (in the file): music / uncategorized | 455 / 106 |
@@ -49,7 +49,7 @@ Command: `npm run catalog` (exit 0). Source: de1.api.radio-browser.info. The que
 | `stateCode` from coordinates in a state outline | 152 |
 | `stateCode` null | 1,465 |
 
-Compared with the same raw data without the upgrade, the file has 522 more stations: 561 upgraded stations are added and 39 https stations are removed by dedupe, because an upgraded station that ranks higher by clicks has the same stream URL. Utah (`UT`) has 31 stations, 3 of them upgraded.
+Compared with the same raw data without the upgrade, the file has 522 more stations: 561 upgraded stations are added and 39 https stations are removed by dedupe, because an upgraded station that ranks higher by clicks has the same stream URL. Utah (`UT`) has 31 Radio Browser stations, 3 of them upgraded, and 32 with the curated KBZN station (see "Curated stations").
 
 Genre counts (a station can count in more than one genre):
 
@@ -74,6 +74,55 @@ File size (`public/catalog.json`):
 | Gzip, after the http upgrade (Node zlib, level 6) | 420,789 | 410.9 |
 
 The size limit for this change is 1.6 MB raw. The file is under it, so no field was dropped. Earlier, the target was 900 KiB and the trim (short keys, coordinates to four decimals, three tags, no `codec` or `bitrate`) brought the file under that. Homepage query strings were left in place.
+
+## Curated stations
+
+`data/curated-stations.json` lists stations that Radio Browser does not have, checked by hand. `npm run catalog` reads it after the Radio Browser fetch (`src/catalog/curated.mjs`, used by `scripts/build-catalog.mjs`) and merges the valid entries into the catalogue.
+
+Rules:
+
+1. **Only official stream links, checked by hand.** An entry is added only when its stream URL was taken from the station's own site or official player and then checked by hand (the request, the content type and that it decodes). Do not add a stream from a directory, a guess, or a third-party aggregator. Record where the URL came from in `source`.
+2. **Same rules as Radio Browser.** Each entry is passed through `normalizeRaw` (`src/catalog/rules.mjs`) as a directory record: https stream, music tags (`classifyDetailed`), coordinates inside a US box, and state text (`parseStateText`). An entry the rules drop is counted in the build summary by reason and is not added.
+3. **https only.** An `http://` stream is rejected when the file is read. The build does not upgrade it.
+4. **Radio Browser wins.** A curated entry is skipped when any Radio Browser record lists the same stream (`http://` and `https://` count as the same stream). A station the rules dropped on the Radio Browser side still counts as listed.
+5. **Invalid file fails the build.** A missing field, a bad id, an http stream, a repeated id or stream, or coordinates that are 0,0, not numbers, out of range or outside the US, makes `npm run catalog` exit with an error that names each bad entry. Nothing is written.
+6. **Stable ids.** The id is `curated:<slug>`, lower-case letters, digits and hyphens (for example `curated:kbzn`). The app stores it in favourites and history like any id. The app's sanitiser needs 8 or more characters, and `curated:kbzn` has 12.
+
+Fields (one object per station in the `stations` array; `schemaVersion` is 1):
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | `curated:<slug>`, unique |
+| `name` | yes | Station name as the station shows it |
+| `streamUrl` | yes | `https://` stream, from the official source |
+| `homepage` | no | `http(s)://` homepage |
+| `favicon` | no | `https://` logo |
+| `state` | yes | US state name or code, with no city (`Utah` or `UT`) |
+| `city` | no | City, written before the state in the catalogue |
+| `tags` | yes | List of tag strings, no commas. The genre comes from them through the same rules |
+| `codec`, `bitrate` | no | As documented; not written to the catalogue (see `scripts/build-catalog.mjs`) |
+| `lat`, `lng` | yes | Coordinates in decimal degrees. Use the transmitter only when it is verified, otherwise city-centre coordinates, and say so in `coordsSource` |
+| `source` | yes | Where the stream URL came from and what was checked |
+| `verified` | yes | Date of the check, `YYYY-MM-DD` |
+| `coordsSource` | yes | Where the coordinates came from, and whether they are city-centre or transmitter |
+
+### How to add a station
+
+1. Find the station's official player or site, and copy the stream URL it uses. It must be `https://`. If it is only `http://`, leave it out.
+2. Check it by hand: `curl -sSI <url>` should return 200 and an audio `Content-Type`, and a short download should decode as audio.
+3. Add an entry to `data/curated-stations.json` with every required field. Use today's date for `verified`.
+4. Run `npm run catalog`. Check the summary line `curated (...): added 1`, then run `npm test`. The build fails if the entry is not valid.
+5. Commit `data/curated-stations.json` and `public/catalog.json` together.
+
+### Current entries
+
+| id | Station | Stream | Checked | Coordinates |
+|---|---|---|---|---|
+| `curated:kbzn` | NOW 97.9 KBZN, Salt Lake City (licensed to Ogden) | `https://capitalslc.cdnstream1.com/2283_96.aac` (AAC, about 96 kbps, from the station's player at `live.mystreamplayer.com/kbzn`, linked from `https://www.kbzn.com`) | 2026-11-18: 200, `audio/aac`, `Access-Control-Allow-Origin: *`, decodes as AAC-LC 44.1 kHz stereo | City centre of Salt Lake City, `40.7608, -111.8910`, from the Wikipedia article. **Not the transmitter location.** |
+
+KBZN is in the catalogue as format "hot adult contemporary", which the tag rules map to Pop, state Utah (`UT`), city Salt Lake City, with the coordinates above. Its catalogue record has no click count.
+
+Limits: the stream was checked once, on 2026-11-18. The app does not re-check curated streams. The map and About panel credit Radio Browser for the station data; a curated station is not from Radio Browser, and the credit does not say so yet.
 
 ## HTTP streams on HTTPS hosts
 
