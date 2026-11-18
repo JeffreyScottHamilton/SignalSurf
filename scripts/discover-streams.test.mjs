@@ -11,6 +11,7 @@ import {
   evaluateWikiPage,
   firstNumber,
   formatTags,
+  hardExcludeTag,
   isDisambiguation,
   locationMatches,
   mountCandidates,
@@ -23,6 +24,8 @@ import {
   stripWiki,
   titleCase,
   titleIsCall,
+  tritonVerdict,
+  WP_PACING,
   wikiTitleCandidates,
 } from './discover-streams.mjs';
 
@@ -220,6 +223,55 @@ describe('evaluateWikiPage (real pages)', () => {
   it('rejects a page whose format is not music with a genre', () => {
     // KUBL-FM with the format changed to "Public radio" in the infobox text.
     const content = wpRec('KUBL-FM').content.replace('[[Country music|Country]]', '[[Public radio]]');
+    expect(evaluateWikiPage({ final: 'KUBL-FM', missing: false, content }, KUBL)).toMatchObject({ outcome: 'reject', kind: 'format' });
+  });
+});
+
+describe('Wikipedia pacing and Triton verdict', () => {
+  it('spaces Wikipedia calls at least 3 s apart, and backs off 120 s with at most 3 retries', () => {
+    expect(WP_PACING).toEqual({ gapMs: 3000, retryMs: 120000, maxRetries: 3 });
+  });
+
+  it('is a hit for the first mount that answers 200 for that exact name, even after an earlier error', () => {
+    const answers = [
+      { mount: 'KUBLFMAAC', answer: { error: 'HTTP 500' } },
+      { mount: 'KUBLFM', answer: { status: 200, mount: 'KUBLFM', codec: 'mp3', hasServers: true } },
+    ];
+    expect(tritonVerdict(answers)).toMatchObject({ status: 'hit', mount: 'KUBLFM' });
+  });
+
+  it('is a miss only when every mount answered and none matched (a 404 inside a 200 is an answer)', () => {
+    const answers = [
+      { mount: 'KUBLFMAAC', answer: { status: 404, mount: null } },
+      { mount: 'KUBLFM', answer: { status: 404, mount: null } },
+    ];
+    expect(tritonVerdict(answers)).toEqual({ status: 'miss' });
+  });
+
+  it('is incomplete when no mount matched and one gave no usable answer', () => {
+    const answers = [
+      { mount: 'KUBLFMAAC', answer: { error: 'HTTP 503' } },
+      { mount: 'KUBLFM', answer: { status: 404, mount: null } },
+    ];
+    expect(tritonVerdict(answers)).toEqual({ status: 'incomplete' });
+  });
+
+  it('refuses a 200 whose mount name is another mount', () => {
+    const answers = [{ mount: 'KUBLFM', answer: { status: 200, mount: 'KUBLFMX' } }];
+    expect(tritonVerdict(answers)).toEqual({ status: 'miss' });
+  });
+});
+
+describe('excluded format tags', () => {
+  it('finds a news, talk or sports tag whole-word, whatever the genre tags beside it', () => {
+    expect(hardExcludeTag(['public radio; jazz', 'classical', 'news'])).toBe('news');
+    expect(hardExcludeTag(['talk radio'])).toBe('talk radio');
+    expect(hardExcludeTag(['classic rock', 'newsworthy music'])).toBeNull();
+    expect(hardExcludeTag(['old time radio'])).toBe('old time radio');
+  });
+
+  it('rejects a Wikipedia page whose format has an excluded tag, even with a genre tag too', () => {
+    const content = wpRec('KUBL-FM').content.replace('[[Country music|Country]]', '[[Country music|Country]] and [[News radio|news]]');
     expect(evaluateWikiPage({ final: 'KUBL-FM', missing: false, content }, KUBL)).toMatchObject({ outcome: 'reject', kind: 'format' });
   });
 });

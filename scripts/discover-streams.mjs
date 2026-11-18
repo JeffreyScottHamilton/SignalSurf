@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { classifyDetailed, expandCatalogRecord, foldTag, parseTags, STATE_NAMES } from '../src/catalog/rules.mjs';
+import { classifyDetailed, expandCatalogRecord, foldTag, HARD_EXCLUDES, parseTags, STATE_NAMES } from '../src/catalog/rules.mjs';
 import { classifyStation, parseDataFile } from './fcc-gap.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -43,11 +43,10 @@ const WP_UA = 'RoadtripRadio-coverage/1.0 (station format lookup; one-off, batch
 const TRITON_API = 'https://playerservices.streamtheworld.com/api/livestream';
 const TRITON_REDIRECT = 'https://playerservices.streamtheworld.com/api/livestream-redirect';
 const TRITON_UA = 'RoadtripRadio-coverage/1.0 (stream mount lookup; about 4 req/s)';
-const WP_GAP_MS = 2000;
 const TRITON_GAP_MS = 250;
 const WP_BATCH = 50;
-const WP_RETRY_MS = 60000;
-const WP_MAX_RETRIES = 3;
+/** Wikipedia pacing: at least 3 s between calls; on HTTP 429 or maxlag wait 120 s, at most 3 retries, then stop. */
+export const WP_PACING = { gapMs: 3000, retryMs: 120000, maxRetries: 3 };
 const FREQ_TOLERANCE = { FM: 0.05, AM: 0.5 };
 
 /** The 50 states and DC. Territories (AS, GU, MP, PR, VI) are out of scope. */
@@ -306,6 +305,20 @@ export function plainHttpsUrl(raw) {
   }
 }
 
+/**
+ * The first hard-exclude tag (news, talk, sports ...) in a station's format tags, or null. classifyDetailed keeps a
+ * station whose genre tags outnumber its excluded tags; docs/decisions.md says a station with any excluded tag is
+ * dropped, so the discovery check is stricter. Whole-word match, as in the classifier.
+ */
+export function hardExcludeTag(tags) {
+  for (const t of tags) {
+    const sp = ` ${foldTag(t)} `;
+    const hit = HARD_EXCLUDES.find((h) => sp.includes(` ${foldTag(h)} `));
+    if (hit !== undefined) return t;
+  }
+  return null;
+}
+
 /** Title-cases an FCC city ("SALT LAKE CITY" becomes "Salt Lake City"). Words split on spaces and hyphens. */
 export function titleCase(text) {
   return String(text ?? '')
@@ -387,6 +400,10 @@ export function evaluateWikiPage(rec, fcc) {
   const tags = parseTags(formatTags(box.get('format') ?? '').join(','));
   const branding = stripWiki(box.get('branding') ?? '');
   const name = stationName(fcc, branding);
+  const excluded = hardExcludeTag(tags);
+  if (excluded !== null) {
+    return { outcome: 'reject', kind: 'format', reason: `format has an excluded tag "${excluded}" (${tags.join(', ')})` };
+  }
   const cls = classifyDetailed(tags, name);
   // The genre must come from the format tags. A name guess ("The Edge" for "College radio") is not enough.
   if (cls.reason !== null || cls.by !== 'tags' || cls.genres.length === 0) {
@@ -401,6 +418,25 @@ export function evaluateWikiPage(rec, fcc) {
     city: titleCase(fcc.city),
     name,
   };
+}
+
+/**
+ * The Triton verdict for one station from its mount answers, in the order tried. Each answer is a parsed response
+ * or { error }. 'hit': the first mount that answers status 200 for that exact mount name. 'miss': no hit, and every
+ * mount gave an answer. 'incomplete': no hit, and some mount gave no usable answer, so the check did not complete.
+ */
+export function tritonVerdict(answers) {
+  let errored = false;
+  for (const { mount, answer } of answers) {
+    if (answer.error) {
+      errored = true;
+      continue;
+    }
+    if (answer.status === 200 && typeof answer.mount === 'string' && answer.mount.toUpperCase() === mount) {
+      return { status: 'hit', mount, parsed: answer };
+    }
+  }
+  return { status: errored ? 'incomplete' : 'miss' };
 }
 
 /** One discovered entry (the shape data/discovered-stations.json holds) from a licence, its Wikipedia check and its Triton mount. */
@@ -506,12 +542,12 @@ async function main() {
 
   let lastWp = 0;
   async function wpGate() {
-    const wait = lastWp + WP_GAP_MS - Date.now();
+    const wait = lastWp + WP_PACING.gapMs - Date.now();
     if (wait > 0) await sleep(wait);
     lastWp = Date.now();
   }
 
-  /** One batched MediaWiki request. Retries HTTP 429 and maxlag up to three times, 60 s apart, then throws. */
+  /** One batched MediaWiki request. Retries HTTP 429 and maxlag up to three times, 120 s apart, then throws. */
   async function wpRequest(titles) {
     const url =
       `${WP_API}?action=query&prop=revisions&rvprop=content&rvslots=main&rvsection=0&format=json&formatversion=2` +
@@ -528,11 +564,11 @@ async function main() {
       }
       const lagged = json?.error?.code === 'maxlag';
       if (res.status === 429 || lagged) {
-        if (attempt >= WP_MAX_RETRIES) {
-          throw new Error(`Wikipedia still rate limited (HTTP ${res.status}${lagged ? ', maxlag' : ''}) after ${WP_MAX_RETRIES} retries; stopped`);
+        if (attempt >= WP_PACING.maxRetries) {
+          throw new Error(`Wikipedia still rate limited (HTTP ${res.status}${lagged ? ', maxlag' : ''}) after ${WP_PACING.maxRetries} retries; stopped`);
         }
-        console.warn(`Wikipedia HTTP ${res.status}${lagged ? ' maxlag' : ''}; waiting 60 s (retry ${attempt + 1} of ${WP_MAX_RETRIES})`);
-        await sleep(WP_RETRY_MS);
+        console.warn(`Wikipedia HTTP ${res.status}${lagged ? ' maxlag' : ''}; waiting ${WP_PACING.retryMs / 1000} s (retry ${attempt + 1} of ${WP_PACING.maxRetries})`);
+        await sleep(WP_PACING.retryMs);
         continue;
       }
       if (res.status !== 200 || json === null || json.error) {
@@ -542,7 +578,11 @@ async function main() {
     }
   }
 
-  /** Per-title records: from the cache, else from one batched request for the rest. Each record is cached. */
+  /**
+   * Per-title records: from the cache, else from one batched request for the rest. Each record is cached. A stop
+   * returns the records already held (cache and earlier batches) with the stop reason, so those stations are still
+   * judged; the titles not reached are absent from the map.
+   */
   async function wikiLookup(titles) {
     const out = new Map();
     const need = [];
@@ -555,7 +595,13 @@ async function main() {
     }
     for (let i = 0; i < need.length; i += WP_BATCH) {
       const batch = need.slice(i, i + WP_BATCH);
-      const q = (await wpRequest(batch)).query ?? {};
+      let json;
+      try {
+        json = await wpRequest(batch);
+      } catch (err) {
+        return { recs: out, stopped: err.message };
+      }
+      const q = json.query ?? {};
       const norm = new Map((q.normalized ?? []).map((x) => [x.from, x.to]));
       const redir = new Map((q.redirects ?? []).map((x) => [x.from, x.to]));
       const pages = new Map((q.pages ?? []).map((p) => [p.title, p]));
@@ -574,30 +620,44 @@ async function main() {
       }
       console.log(`wikipedia batch ${Math.floor(i / WP_BATCH) + 1}: ${batch.length} titles`);
     }
-    return out;
+    return { recs: out, stopped: null };
   }
 
   // Step 2: Wikipedia. Attempt 0 is the base call sign. Attempt 1 (CALL-FM or CALL (AM)) runs only for the
-  // stations whose attempt 0 was a fallback. A reject stops at once.
+  // stations whose attempt 0 was a fallback. A reject stops at once. A stop (HTTP error after the retries) ends the
+  // stage: the stations it did not reach stay incomplete and are not kept, but the stations already checked are.
   const state = todo.map((row) => ({ fcc: row, result: null, lastFallback: null }));
-  for (let k = 0; k < 2; k++) {
+  let stopped = null;
+  for (let k = 0; k < 2 && stopped === null; k++) {
     const pending = state.filter((st) => st.result === null);
     if (pending.length === 0) break;
     const titleOf = (st) => wikiTitleCandidates(st.fcc.call, st.fcc.band)[k];
-    const recs = await wikiLookup(pending.map(titleOf));
+    const looked = await wikiLookup(pending.map(titleOf));
+    stopped = looked.stopped;
     for (const st of pending) {
-      const ev = evaluateWikiPage(recs.get(titleOf(st)), st.fcc);
+      const rec = looked.recs.get(titleOf(st));
+      if (rec === undefined) continue;
+      const ev = evaluateWikiPage(rec, st.fcc);
       if (ev.outcome === 'fallback') st.lastFallback = ev;
       else st.result = ev;
     }
   }
   const wpKinds = new Map();
+  let wpIncomplete = 0;
   for (const st of state) {
-    if (st.result === null) st.result = { outcome: 'reject', kind: `no usable page (${st.lastFallback.kind})`, reason: st.lastFallback.reason };
+    if (st.result === null) {
+      if (st.lastFallback === null || stopped !== null) {
+        wpIncomplete += 1;
+        continue;
+      }
+      st.result = { outcome: 'reject', kind: `no usable page (${st.lastFallback.kind})`, reason: st.lastFallback.reason };
+    }
     if (st.result.outcome !== 'accept') countBy(wpKinds, st.result.kind);
   }
-  const accepted = state.filter((st) => st.result.outcome === 'accept');
-  console.log(`Wikipedia: accepted ${accepted.length} of ${todo.length}; not kept: ${summary(wpKinds)}`);
+  const accepted = state.filter((st) => st.result !== null && st.result.outcome === 'accept');
+  const checked = state.filter((st) => st.result !== null).length;
+  console.log(`Wikipedia: checked ${checked} of ${todo.length}; accepted ${accepted.length}; not kept: ${summary(wpKinds)}`);
+  if (wpIncomplete > 0) console.log(`Wikipedia: ${wpIncomplete} not checked (stopped); not kept`);
 
   // Step 3: Triton. Mounts in order; stop at the first one that answers status 200 for that exact mount.
   let lastT = 0;
@@ -627,21 +687,22 @@ async function main() {
   const tritonKinds = new Map();
   for (const st of accepted) {
     const row = st.fcc;
-    let hit = null;
-    let mountUsed = null;
+    const answers = [];
     for (const mount of mountCandidates(row.call, row.band)) {
-      const p = await tritonLookup(mount);
-      if (p.error) continue;
-      if (p.status === 200 && typeof p.mount === 'string' && p.mount.toUpperCase() === mount) {
-        hit = p;
-        mountUsed = mount;
-        break;
-      }
+      answers.push({ mount, answer: await tritonLookup(mount) });
+      if (tritonVerdict(answers).status === 'hit') break;
     }
-    if (hit === null) {
+    const verdict = tritonVerdict(answers);
+    if (verdict.status === 'incomplete') {
+      countBy(tritonKinds, 'Triton not answered (not kept)');
+      continue;
+    }
+    if (verdict.status === 'miss') {
       countBy(tritonKinds, 'no Triton mount');
       continue;
     }
+    const hit = verdict.parsed;
+    const mountUsed = verdict.mount;
     const { ext, reason } = codecToExt(hit.codec, mountUsed);
     if (ext === null) {
       countBy(tritonKinds, reason);
@@ -659,6 +720,10 @@ async function main() {
     console.log(`wrote ${OUT}: ${kept.length} stations`);
   }
   console.log(`requests: ${Object.entries(net).map(([h, n]) => `${h} ${n}`).join('; ')}; cache hits: wikipedia ${cacheHits.wikipedia}, triton ${cacheHits.triton}`);
+  if (stopped !== null) {
+    console.error(`STOPPED: ${stopped}. Written: the completed stations only. Re-run to resume from the cache.`);
+    process.exitCode = 2;
+  }
 }
 
 // The main run starts only when this file is the entry point (not when a test imports it).

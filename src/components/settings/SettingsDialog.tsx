@@ -136,6 +136,7 @@ export function SettingsDialog() {
                 <p>
                   {BRAND.name} is a free map of US music stations you can play in the browser. Station data comes from
                   the community-run Radio Browser directory, filtered to US music stations (a few list no genre and are marked "Genre not listed"), plus a few hand-checked official station streams.
+                  More official streams were found through FCC licence records, Wikipedia station articles and Triton (StreamTheWorld) livestreams.
                   Streams play directly from each broadcaster. Stations without a known location are in the list only.
                 </p>
                 {catalogUpdated !== null && <p>Catalogue updated {catalogUpdated}</p>}
@@ -144,7 +145,11 @@ export function SettingsDialog() {
                   <a href="https://www.radio-browser.info/" target="_blank" rel="noopener noreferrer">
                     Radio Browser
                   </a>
-                  {', plus a few hand-checked official station streams · Some locations: '}
+                  {', plus a few hand-checked official station streams and official streams found via FCC, Wikipedia and Triton · Station formats: '}
+                  <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
+                    Wikipedia
+                  </a>
+                  {' (CC BY-SA 4.0) · Some locations: '}
                   <a href="https://www.fcc.gov/" target="_blank" rel="noopener noreferrer">
                     FCC
                   </a>

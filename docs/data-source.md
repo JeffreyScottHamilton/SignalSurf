@@ -181,13 +181,13 @@ Licensed US music stations that Radio Browser does not list, and that have an of
 
 1. **Candidates.** FCC full-power FM and AM licences (`data/fcc-stations.json`) in the 50 states and DC that the catalogue does not already match, by call sign, or by frequency and place (the matcher in `scripts/fcc-gap.mjs`). LPFM and the territories are out of scope.
 2. **Skipped networks.** Single-feed networks whose stations all carry one network programme, so each would add a duplicate stream: K-LOVE (Educational Media Foundation), Air1 (Hope Media Group), Moody Radio, Bible Broadcasting Network, American Family Association, Relevant Radio, Family Life Ministries, and iHeartMedia (IHM Licenses; its streams are reached only through iHeart's own app API). The run prints the count per network.
-3. **Wikipedia format.** The station's article is read through the MediaWiki API, in batches of 50 titles, one request every 2 s, with a 60 s back-off and up to three retries on HTTP 429 or maxlag. The title tried first is the call sign; if that is not the station's page, CALL-FM (FM) or CALL (AM) is tried. A station is kept only when the page:
+3. **Wikipedia format.** The station's article is read through the MediaWiki API, in batches of 50 titles, at least 3 s between requests, with a 120 s back-off and up to three retries on HTTP 429 or maxlag. A stop after the retries ends the stage: the stations not yet checked are not kept, and the stations already checked are still judged. The title tried first is the call sign; if that is not the station's page, CALL-FM (FM) or CALL (AM) is tried. A station is kept only when the page:
    - is for this call sign (a redirect to another station's page, such as KUTX-FM to KUT, is refused);
    - is not a disambiguation page;
    - has a radio station infobox whose frequency matches the licence (FM within 0.05 MHz, AM within 0.5 kHz) when it gives one;
    - has a city or state that agrees with the licence (a state named in the text must be the licence's state; a bare city must be the licence's city);
-   - has a format whose tags name a music genre under the catalogue's rules. A genre guessed from the station name does not count: a "College radio" station called "The Edge" is not kept.
-4. **Triton mount.** The mounts tried in order are `CALL+BAND+AAC`, `CALL+BAND`, `CALL+AAC`, `CALL`, at most four requests, 250 ms apart. The first mount that answers with XML status 200 and names that exact mount is used. (A miss is HTTP 200 with a 404 status inside the XML.) The codec in the XML sets the file extension: `aac`, `heaacv1` and `heaacv2` give `aac`; `mp3` gives `mp3`. A mount named `...AAC` whose codec is `mp3` is not kept. Stream URL: `https://playerservices.streamtheworld.com/api/livestream-redirect/<MOUNT>.<ext>`.
+   - has a format with no excluded tag (news, talk, sports and the other hard-exclude tags in `src/catalog/rules.mjs`; any one of them drops the station, even beside a genre tag, as `docs/decisions.md` says) and whose tags name a music genre under the catalogue's rules. A genre guessed from the station name does not count: a "College radio" station called "The Edge" is not kept.
+4. **Triton mount.** The mounts tried in order are `CALL+BAND+AAC`, `CALL+BAND`, `CALL+AAC`, `CALL`, at most four requests, 250 ms apart. The first mount that answers with XML status 200 and names that exact mount is used. (A miss is HTTP 200 with a 404 status inside the XML.) If no mount hits and some mount gave no usable answer (a network error or a response with no mountpoint), the check is incomplete and the station is not kept. The codec in the XML sets the file extension: `aac`, `heaacv1` and `heaacv2` give `aac`; `mp3` gives `mp3`. A mount named `...AAC` whose codec is `mp3` is not kept. Stream URL: `https://playerservices.streamtheworld.com/api/livestream-redirect/<MOUNT>.<ext>`.
 5. **Entry.** `id` is `fcc:<facility id>`; `name` is the call sign, the frequency and the branding (`KUBL 93.3 The Bull`); `homepage` is the Wikipedia website when it is one plain https link (a bracketed link or a `{{URL}}` template is read; anything else is left empty); `lat`/`lng` are the FCC transmitter; `tags` are the format tags; `wikiTitle`, `tritonMount`, `codec`, `source` and `verified` (the run date) say where each fact came from.
 
 The cache (`--cache`, default a temp directory) holds one file per Wikipedia title and per Triton mount. A re-run, or a re-run after a stop, repeats no request that was already answered. A `--limit <n>` run does not write the committed file.
@@ -212,13 +212,30 @@ The build also fills the FCC transmitter point for directory stations that have 
 - A Triton mount named for a call sign can belong to a different station with the same letters. The call sign, frequency and place checks reduce that risk; they do not remove it.
 - The FCC point is the licensed transmitter site, not the city. For a station on a tower outside its city, the map point is at the tower.
 - Triton's terms for third-party players are not verified (see `docs/licenses.md`).
-- Wikipedia text is CC BY-SA 4.0. The entries carry the article title, but the app does not yet show that attribution (see `docs/licenses.md`, Open items).
+- Wikipedia text is CC BY-SA 4.0. The entries carry the article title, and the map attribution and the About panel name Wikipedia (see `docs/licenses.md`).
 
-### Run status
+### Run status (2026-11-18)
 
-The discovery is wired but no discovered data has shipped yet. Wikipedia rate-limited this network address (HTTP 429): the same address was refused for more than 40 minutes over four restarts, including by curl. About 880 Wikipedia titles are cached from the completed batches. So `data/discovered-stations.json` has not been produced, and it is not committed.
+Wikipedia answered the first batches with 200, then returned HTTP 429 from this network address at about 3 s pacing. Each run retried 429 three times, 120 s apart, and then stopped. The file ships only the stations whose Wikipedia and Triton checks both completed, so the list is partial.
 
-Until it exists, `npm run catalog` treats it as an empty list and prints `discovered: 0 (file not present)`. The build does not fail. The discovered merge adds nothing, and no Wikipedia data is in the catalogue or the credits. The build test (`src/catalog/curated-build.test.mjs`) passes `--discovered` an empty file in its temporary directory, so it does not depend on this file. Counts (candidates, kept, Triton hits, coordinates filled, catalogue total) will be written here when a run completes.
+| Measure | Value |
+|---|---|
+| FCC licences | 17,621 |
+| Candidates (FM and AM, 50 states and DC, not matched in the catalogue) | 12,424 |
+| Wikipedia checked before the stop | 829 of 12,424 (about 6.7%); 11,595 not checked |
+| Wikipedia accepted (music format with a genre, page for this call sign, location and frequency agree) | 411 |
+| Triton hits (exact mount answered 200) | 6 of 411 |
+| Added to the catalogue after dedupe | 6 (none skipped as a duplicate) |
+
+The shipped stations are WBCX 89.1 (Gainesville GA), KXPR 88.9 (Sacramento CA), KNBA 90.3 (Anchorage AK), KCNV 89.7 (Las Vegas NV), WEOS 89.5 (Geneva NY) and KRUA 88.1 (Anchorage AK). Utah has no discovered station yet.
+
+Two fixes came out of these runs. A stop used to end the Wikipedia stage before any station was judged, so the first run wrote an empty file; the completed stations are now judged and written. A station with an excluded tag beside a genre tag was kept by the classifier; the Wikipedia step now drops it (KCND 90.5, Bismarck ND, was the case, and is not in the file).
+
+To finish the list: run `npm run discover -- --cache <dir>` again after the Wikipedia rate limit has cleared. The cache keeps the answers already received, so only the rest is requested. Then run `npm run catalog`.
+
+Build (`npm run catalog`, exit 0): `public/catalog.json` is 1,260,558 bytes raw (1.2 MB, under the 2.5 MB limit) and 422,660 bytes gzipped (Node zlib; 433,970 with the gzip command). Before this change it was 4,420 stations, 1,873 with coordinates, 1,258,826 bytes raw and 435,302 gzipped. After it is 4,429 stations and 1,878 with coordinates. The change is +6 discovered, +1 curated, and +2 from the directory, which was fetched live for this build (7,019 raw records), so the directory part is not from this discovery. `docs/coverage.md` (offline): matched by call sign 1,374 to 1,382, probable 339 to 338, missing 15,908 to 15,901, of 17,621 licences.
+
+Until a discovered file exists, `npm run catalog` treats it as an empty list and prints `discovered: 0 (file not present)`. The build does not fail.
 
 ## HTTP streams on HTTPS hosts
 
