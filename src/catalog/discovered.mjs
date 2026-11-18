@@ -151,7 +151,8 @@ export function mergeDiscovered(stations, entries, options) {
       skipped.call.push(e.id);
       continue;
     }
-    out.push(result.station);
+    // The article title is kept (short key w) so the app can link the Wikipedia article (CC BY-SA attribution).
+    out.push({ ...result.station, wikiTitle: e.wikiTitle });
     keys.add(key);
     added += 1;
   }

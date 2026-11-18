@@ -1,11 +1,13 @@
 // Tests for the discovery parsers (scripts/discover-streams.mjs). Fixtures in scripts/fixtures/discover are real
 // responses saved on 2026-11-18: kublfm.xml and kublfmaac.xml (Triton livestream XML), wp1.json (one MediaWiki
 // batch, with redirects and a disambiguation page). No network access in these tests.
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  candidateGroup,
   candidateStations,
   codecToExt,
   evaluateWikiPage,
@@ -15,17 +17,22 @@ import {
   isDisambiguation,
   locationMatches,
   mountCandidates,
+  orderCandidates,
   parseInfobox,
   parseLivestreamXml,
   plainHttpsUrl,
+  readProgress,
   redirectUrl,
+  runDiscovery,
   skippedLicensee,
   stationName,
   stripWiki,
   titleCase,
   titleIsCall,
+  TRITON_PACING,
   tritonVerdict,
   WP_PACING,
+  WP_UA,
   wikiTitleCandidates,
 } from './discover-streams.mjs';
 
@@ -273,5 +280,229 @@ describe('excluded format tags', () => {
   it('rejects a Wikipedia page whose format has an excluded tag, even with a genre tag too', () => {
     const content = wpRec('KUBL-FM').content.replace('[[Country music|Country]]', '[[Country music|Country]] and [[News radio|news]]');
     expect(evaluateWikiPage({ final: 'KUBL-FM', missing: false, content }, KUBL)).toMatchObject({ outcome: 'reject', kind: 'format' });
+  });
+});
+
+describe('run order: commercial FM first, then AM, then FM below 92.0', () => {
+  const row = (call, band, freq) => ({ call, band, freq, facilityId: call, state: 'UT', city: 'X', lat: 40, lng: -111 });
+
+  it('puts FM 92.0 and up first, AM next, FM below 92.0 last, and keeps the file order within each group', () => {
+    const cands = [
+      row('K88', 'FM', 88.1),
+      row('KAM1', 'AM', 570),
+      row('K920', 'FM', 92.0),
+      row('K101', 'FM', 101.1),
+      row('K919', 'FM', 91.9),
+      row('KAM2', 'AM', 1160),
+    ];
+    expect(orderCandidates(cands).map((c) => c.call)).toEqual(['K920', 'K101', 'KAM1', 'KAM2', 'K88', 'K919']);
+  });
+
+  it('gives each candidate one group (92.0 is commercial; 91.9 is not)', () => {
+    expect(candidateGroup({ band: 'FM', freq: 92.0 })).toBe(0);
+    expect(candidateGroup({ band: 'FM', freq: 91.9 })).toBe(2);
+    expect(candidateGroup({ band: 'AM', freq: 1000 })).toBe(1);
+  });
+
+  it('returns a new array and does not change the input', () => {
+    const input = [row('K88', 'FM', 88.1), row('K101', 'FM', 101.1)];
+    const out = orderCandidates(input);
+    expect(out).not.toBe(input);
+    expect(input.map((c) => c.call)).toEqual(['K88', 'K101']);
+  });
+});
+
+describe('Wikipedia User-Agent and pacing', () => {
+  it('names the rate as 1 req/3s', () => {
+    expect(WP_UA).toContain('1 req/3s');
+  });
+
+  it('paces Triton at four requests a second at most, with back-offs of 60, 120 and 240 s and three retries', () => {
+    expect(TRITON_PACING).toEqual({ gapMs: 250, retryMs: [60000, 120000, 240000], maxRetries: 3 });
+  });
+});
+
+describe('the run, Triton first (fake network and clock)', () => {
+  const KUBL_HIT = 'KUBLFMAAC';
+  const xmlHit = (mount) => readFileSync(join(here, 'fixtures/discover/kublfmaac.xml'), 'utf8').replace(/KUBLFMAAC/g, mount);
+  const missXml = (mount) =>
+    '<?xml version="1.0"?><live_stream_config><mountpoints><mountpoint><status><status-code>404</status-code>'
+    + `<status-message>Not Found</status-message></status><mount>${mount}</mount></mountpoint></mountpoints></live_stream_config>`;
+  const KUBL_CONTENT = wpRec('KUBL-FM').content;
+
+  // Licences: KUBL (FM 93.3, Triton hit, Wikipedia accepts KUBL-FM); KSFI (FM 100.3, no mount); KZZZ (AM 570, Triton
+  // hit, no Wikipedia page); KFM2 (FM 88.1, below 92.0).
+  const KUBL_ROW = { ...KUBL, facilityId: '11238' };
+  const KSFI_ROW = { ...KSFI, facilityId: '60452' };
+  const KZZZ_ROW = { call: 'KZZZ', band: 'AM', freq: 570, city: 'SALT LAKE CITY', state: 'UT', lat: 40.6, lng: -111.9, facilityId: '900' };
+  const KFM2_ROW = { call: 'KFM2', band: 'FM', freq: 88.1, city: 'PROVO', state: 'UT', lat: 40.2, lng: -111.6, facilityId: '777' };
+  const ORDERED = orderCandidates([KFM2_ROW, KZZZ_ROW, KSFI_ROW, KUBL_ROW]);
+
+  /** A fake network: Triton answers from `hits` (mount to XML), `scripted` (mount to a queue of responses first), else a
+   *  404 miss; Wikipedia answers from `wikiPages` (title to content; missing otherwise), with 429 from call `wikiFailFrom`. */
+  function world({ hits = {}, scripted = {}, wikiPages = {}, wikiFailFrom = Infinity } = {}) {
+    let t = 1_000_000;
+    const log = { triton: [], wiki: [], sleeps: [], order: [] };
+    let wikiCalls = 0;
+    const deps = {
+      now: () => t,
+      sleep: async (ms) => {
+        log.sleeps.push(ms);
+        t += ms;
+      },
+      log: () => {},
+      warn: () => {},
+      getText: async (url) => {
+        const u = new URL(url);
+        if (u.hostname === 'en.wikipedia.org') {
+          const titles = u.searchParams.get('titles').split('|');
+          log.wiki.push({ t, titles });
+          log.order.push('wiki');
+          const n = wikiCalls;
+          wikiCalls += 1;
+          if (n >= wikiFailFrom) return { status: 429, body: '{"error":{"code":"ratelimited"}}' };
+          const pages = titles.map((title) =>
+            wikiPages[title] !== undefined
+              ? { title, revisions: [{ slots: { main: { content: wikiPages[title] } } }] }
+              : { title, missing: true },
+          );
+          return { status: 200, body: JSON.stringify({ query: { pages } }) };
+        }
+        const mount = u.searchParams.get('mount');
+        log.triton.push({ t, mount });
+        log.order.push('triton');
+        if (scripted[mount]?.length) return scripted[mount].shift();
+        if (hits[mount] !== undefined) return { status: 200, body: hits[mount] };
+        return { status: 200, body: missXml(mount) };
+      },
+    };
+    return { deps, log };
+  }
+
+  let dir;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'discover-test-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const hitsFor = () => ({ [KUBL_HIT]: xmlHit(KUBL_HIT), KZZZAMAAC: xmlHit('KZZZAMAAC') });
+
+  it('checks Triton for every candidate first, then asks Wikipedia only about the Triton hits', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.stopped).toBeNull();
+    const firstWiki = w.log.order.indexOf('wiki');
+    expect(firstWiki).toBeGreaterThan(-1);
+    expect(w.log.order.slice(0, firstWiki).every((x) => x === 'triton')).toBe(true);
+    const titles = w.log.wiki.flatMap((c) => c.titles);
+    expect(titles.some((x) => x.startsWith('KSFI') || x.startsWith('KFM2'))).toBe(false);
+    expect(titles).toContain('KUBL-FM');
+    expect(titles).toContain('KZZZ (AM)');
+  });
+
+  it('keeps only the Wikipedia-accepted Triton hit, with its title and mount', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.kept.map((e) => e.id)).toEqual(['fcc:11238']);
+    expect(r.kept[0]).toMatchObject({ call: 'KUBL', wikiTitle: 'KUBL-FM', tritonMount: KUBL_HIT, codec: 'heaacv2' });
+    expect(r.counts.tritonHits).toBe(2);
+    expect(r.counts.wikipedia.accepted).toBe(1);
+  });
+
+  it('asks Triton the four mounts for a station with no hit, and makes no Wikipedia call for it', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    const ksfi = w.log.triton.filter((c) => c.mount.startsWith('KSFI')).map((c) => c.mount);
+    expect(ksfi).toEqual(['KSFIFMAAC', 'KSFIFM', 'KSFIAAC', 'KSFI']);
+  });
+
+  it('spaces Triton requests at least 250 ms apart and Wikipedia requests at least 3 s apart', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    for (let i = 1; i < w.log.triton.length; i++) {
+      expect(w.log.triton[i].t - w.log.triton[i - 1].t).toBeGreaterThanOrEqual(TRITON_PACING.gapMs);
+    }
+    for (let i = 1; i < w.log.wiki.length; i++) {
+      expect(w.log.wiki[i].t - w.log.wiki[i - 1].t).toBeGreaterThanOrEqual(WP_PACING.gapMs);
+    }
+  });
+
+  it('backs off and retries a Triton 503, then carries on', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT }, scripted: { KFM2FMAAC: [{ status: 503, body: 'x' }] } });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.stopped).toBeNull();
+    expect(w.log.sleeps).toContain(60000);
+    expect(w.log.triton.filter((c) => c.mount === 'KFM2FMAAC')).toHaveLength(2);
+  });
+
+  it('stops Triton after three retries on a 403, keeps nothing, and makes no Wikipedia call', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT }, scripted: { KFM2FMAAC: Array(5).fill({ status: 403, body: 'no' }) } });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.stopped).toMatchObject({ stage: 'triton' });
+    expect(w.log.triton.filter((c) => c.mount === 'KFM2FMAAC')).toHaveLength(4);
+    expect(w.log.sleeps.filter((ms) => ms > TRITON_PACING.gapMs)).toEqual([60000, 120000, 240000]);
+    expect(r.kept).toEqual([]);
+    expect(w.log.wiki).toEqual([]);
+  });
+
+  it('resumes after a stop from the progress file: finished stations are not asked again', async () => {
+    const first = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT }, scripted: { KFM2FMAAC: Array(5).fill({ status: 403, body: 'no' }) } });
+    await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: first.deps, verified: '2026-11-18' });
+    expect(readProgress(join(dir, 'triton-progress.jsonl')).size).toBe(3);
+    rmSync(join(dir, 'triton'), { recursive: true, force: true }); // the mount cache is gone: only the progress file remains
+    const second = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: second.deps, verified: '2026-11-18' });
+    expect(r.stopped).toBeNull();
+    expect(second.log.triton.map((c) => c.mount).filter((m) => /^(KUBL|KSFI|KZZZ)/.test(m))).toEqual([]);
+    expect(second.log.triton.map((c) => c.mount)).toEqual(['KFM2FMAAC', 'KFM2FM', 'KFM2AAC', 'KFM2']);
+    expect(r.kept.map((e) => e.id)).toEqual(['fcc:11238']);
+    expect(readProgress(join(dir, 'triton-progress.jsonl')).size).toBe(4);
+  });
+
+  it('stops Wikipedia after its retries (429), keeps nothing unjudged, and a re-run finishes it', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT }, wikiFailFrom: 0 });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.stopped).toMatchObject({ stage: 'wikipedia' });
+    expect(w.log.wiki).toHaveLength(4);
+    expect(w.log.sleeps.filter((ms) => ms === 120000)).toHaveLength(3);
+    expect(r.kept).toEqual([]);
+    expect(readProgress(join(dir, 'triton-progress.jsonl')).size).toBe(4);
+    const again = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    const r2 = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: again.deps, verified: '2026-11-18' });
+    expect(r2.stopped).toBeNull();
+    expect(r2.kept.map((e) => e.id)).toEqual(['fcc:11238']);
+    expect(again.log.triton).toEqual([]);
+  });
+
+  it('keeps the Triton hits judged before a Wikipedia stop', async () => {
+    const many = Array.from({ length: 51 }, (_, i) => ({ ...KUBL, call: `KT${String(i).padStart(2, '0')}`, facilityId: String(5000 + i) }));
+    const hits = {};
+    const wikiPages = {};
+    for (const r of many) {
+      hits[`${r.call}FMAAC`] = xmlHit(`${r.call}FMAAC`);
+      wikiPages[r.call] = KUBL_CONTENT;
+    }
+    // Batch 1 (50 titles) is judged; batch 2 (one title) hits 429 on every try, so the stage stops.
+    const w = world({ hits, wikiPages, wikiFailFrom: 1 });
+    const r = await runDiscovery({ candidates: many, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.stopped).toMatchObject({ stage: 'wikipedia' });
+    expect(r.kept).toHaveLength(50);
+    expect(r.counts.wikipedia.notChecked).toBe(1);
+  });
+
+  it('does not keep a Triton hit whose Wikipedia page is missing (no format, no station)', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: {} });
+    const r = await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
+    expect(r.stopped).toBeNull();
+    expect(r.kept).toEqual([]);
+  });
+
+  it('reads a progress file and ignores a torn last line', () => {
+    const file = join(dir, 'triton-progress.jsonl');
+    writeFileSync(file, '{"id":"fcc:1","status":"miss"}\n{"id":"fcc:2","stat');
+    expect([...readProgress(file).keys()]).toEqual(['fcc:1']);
+    expect(readProgress(join(dir, 'missing.jsonl')).size).toBe(0);
   });
 });

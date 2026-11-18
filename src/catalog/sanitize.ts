@@ -58,6 +58,7 @@ export function sanitizeStation(v: unknown): Station | null {
   const bitrate = v.bitrate;
   const stateCode = typeof v.stateCode === 'string' ? v.stateCode.trim() : '';
   const legacy = text(v.legacyLocation);
+  const wikiTitle = text(v.wikiTitle);
 
   return {
     id,
@@ -77,6 +78,7 @@ export function sanitizeStation(v: unknown): Station | null {
     coords: coordsOf(v.coords),
     clickCount: nonNegative(v.clickCount),
     ...(legacy !== null ? { legacyLocation: legacy } : {}),
+    ...(wikiTitle !== null ? { wikiTitle } : {}),
     ...(v.uncategorized === true ? { uncategorized: true } : {}),
   };
 }

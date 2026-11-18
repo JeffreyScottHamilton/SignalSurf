@@ -115,3 +115,12 @@ describe('mergeDiscovered precedence', () => {
     expect(Object.values(r.dropped).reduce((a, b) => a + b, 0)).toBe(1);
   });
 });
+
+describe('discovered stations keep the Wikipedia article title', () => {
+  it('carries wikiTitle into the merged station (for the Format info link)', () => {
+    const { stations } = parseDiscovered({ stations: [entry({ wikiTitle: 'KUBL-FM' })] });
+    const r = mergeDiscovered([], stations, { streamKeys: [], sameStation: () => false });
+    expect(r.stations).toHaveLength(1);
+    expect(r.stations[0].wikiTitle).toBe('KUBL-FM');
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Station } from '@/types';
-import { countLabel, dayLabel, externalHref, formatPlayedAt, stationLocation } from './format';
+import { countLabel, dayLabel, externalHref, formatPlayedAt, stationLocation, wikipediaArticleUrl } from './format';
 
 describe('countLabel', () => {
   it('uses the singular for one and a grouped number otherwise', () => {
@@ -113,5 +113,20 @@ describe('dayLabel', () => {
 
   it('includes the year when the day is in a different year', () => {
     expect(dayLabel(new Date(2025, 11, 31, 9, 0).getTime(), NOW)).toBe('Dec 31, 2025');
+  });
+});
+
+describe('wikipediaArticleUrl', () => {
+  it('builds the article URL from the title, spaces as underscores and percent-encoded', () => {
+    expect(wikipediaArticleUrl('KUBL-FM')).toBe('https://en.wikipedia.org/wiki/KUBL-FM');
+    expect(wikipediaArticleUrl('KXXX (AM)')).toBe('https://en.wikipedia.org/wiki/KXXX_(AM)');
+    expect(wikipediaArticleUrl(' WBCX ')).toBe('https://en.wikipedia.org/wiki/WBCX');
+    expect(wikipediaArticleUrl('A&B')).toBe('https://en.wikipedia.org/wiki/A%26B');
+  });
+
+  it('returns null for no title or a blank one', () => {
+    expect(wikipediaArticleUrl(undefined)).toBeNull();
+    expect(wikipediaArticleUrl(null)).toBeNull();
+    expect(wikipediaArticleUrl('   ')).toBeNull();
   });
 });

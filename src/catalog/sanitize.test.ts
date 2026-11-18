@@ -126,4 +126,10 @@ describe('sanitizeStation', () => {
     const s = sanitizeStation(valid({ hls: 'yes', clickCount: -4 }));
     expect(s).toMatchObject({ hls: false, clickCount: 0 });
   });
+
+  it('keeps the Wikipedia article title of a discovered station, and drops a blank one', () => {
+    expect(sanitizeStation(valid({ wikiTitle: 'KUBL-FM' }))).toMatchObject({ wikiTitle: 'KUBL-FM' });
+    expect(sanitizeStation(valid({ wikiTitle: '  ' }))).not.toHaveProperty('wikiTitle');
+    expect(sanitizeStation(valid())).not.toHaveProperty('wikiTitle');
+  });
 });

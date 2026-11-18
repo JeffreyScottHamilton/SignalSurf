@@ -152,6 +152,10 @@ Wikipedia returned HTTP 429 from this network address during the 2026-11-18 runs
 
 A station with any excluded tag (news, talk, sports and the other hard-exclude tags) is dropped at the Wikipedia step. The rule in "The music rule" above says any excluded tag drops a station, but `classifyDetailed` in `src/catalog/rules.mjs` keeps a station whose genre tags outnumber its excluded tags. The discovery check follows the written rule. The directory rule is not changed here, so the two paths differ until the classifier is fixed (open item).
 
+## Discovery checks Triton first, and asks Wikipedia only about the Triton hits
+
+The discovery run (`scripts/discover-streams.mjs`) checks Triton for every candidate first, in this order: commercial-band FM (92.0 MHz and up), then AM, then FM below 92.0. Wikipedia is then asked only about the stations Triton answered for, with a usable codec. Reason: Wikipedia rate-limits this network address, and most candidates have no Triton mount, so a Wikipedia-first run spent its requests on stations that could never be kept. The first run covered only 88 to 90 MHz noncommercial stations in FCC file order, and found 6 Triton mounts among 411 Wikipedia-accepted stations. A Triton pass is paced at 4 requests a second at most, and backs off (60, 120, 240 s) and stops after three retries on an error or a status other than 200 or 404. Its verdicts go to a progress file, so a re-run resumes. A station is still kept only with a Wikipedia music format (see the Wikipedia rules above and in `docs/data-source.md`).
+
 ## Discovered stations are a committed file from a separate, networked script
 
 Licensed US music stations that Radio Browser does not list are added when they have an official Triton (StreamTheWorld) livestream and a Wikipedia article that gives a music format for the same call sign. `npm run discover` (`scripts/discover-streams.mjs`) makes the list and writes `data/discovered-stations.json`, which is committed. `npm run catalog` only reads that file, like the curated list. The network use is therefore in one script that is run by hand and cached, not in the build.

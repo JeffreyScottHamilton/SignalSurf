@@ -41,6 +41,16 @@ export function externalHref(url: string | null | undefined): string | null {
   return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
 }
 
+/**
+ * The English Wikipedia article for a station's wikiTitle (the title only is stored): https://en.wikipedia.org/wiki/<title>,
+ * with spaces as underscores and the rest percent-encoded. Null when there is no title.
+ */
+export function wikipediaArticleUrl(title: string | null | undefined): string | null {
+  const t = typeof title === 'string' ? title.trim() : '';
+  if (t === '') return null;
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(t.replace(/ /g, '_'))}`;
+}
+
 /** Time such as "2:14 PM" when played today, otherwise a short date such as "Nov 12". */
 export function formatPlayedAt(ms: number, now: number = Date.now()): string {
   if (startOfDay(ms) === startOfDay(now)) {

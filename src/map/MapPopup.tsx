@@ -1,7 +1,7 @@
 import { player, usePlayer } from '@/audio/player';
 import { IconButton } from '@/components/common/IconButton';
 import { BookmarkIcon, PauseIcon, PlayIcon } from '@/components/common/icons';
-import { stationLocation } from '@/lib/format';
+import { stationLocation, wikipediaArticleUrl } from '@/lib/format';
 import { exploreStore } from '@/state/explore';
 import { favorites, useIsFavorite } from '@/storage/favorites';
 import type { Station } from '@/types';
@@ -14,6 +14,7 @@ export function MapPopupCard({ station }: { station: Station }) {
   const busy =
     isCurrent && (state.status === 'playing' || state.status === 'buffering' || state.status === 'loading');
   const location = stationLocation(station);
+  const article = wikipediaArticleUrl(station.wikiTitle);
 
   function onPlay() {
     if (isCurrent) {
@@ -47,6 +48,11 @@ export function MapPopupCard({ station }: { station: Station }) {
         {busy ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
         <span>{busy ? 'Pause' : 'Play'}</span>
       </button>
+      {article && (
+        <a className="ss-map-card__format" href={article} target="_blank" rel="noopener noreferrer">
+          Format info: Wikipedia
+        </a>
+      )}
     </div>
   );
 }

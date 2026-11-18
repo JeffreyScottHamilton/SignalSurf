@@ -4,28 +4,35 @@
 // committed: `npm run catalog` reads that file and never runs this script.
 //
 // Usage: node --use-env-proxy scripts/discover-streams.mjs [--cache <dir>] [--limit <n>]
-//   --cache  cache directory for Wikipedia and Triton responses (default: $DISCOVER_CACHE_DIR or a tmp dir).
-//            Responses are cached, so a re-run, or a re-run after a stop, does not repeat requests.
-//   --limit  process only the first n candidates (a quick check)
+//   --cache  cache directory (default: $DISCOVER_CACHE_DIR or a tmp dir). It holds the Wikipedia answers (wp/), the
+//            Triton answers (triton/) and the Triton progress (triton-progress.jsonl, one line per station). A re-run,
+//            or a re-run after a stop, repeats no request that was already answered.
+//   --limit  process only the first n candidates (a quick check; the committed file is not written)
 //
-// Steps:
+// Order: Triton first, Wikipedia second. Wikipedia is rate limited, so it is asked only about the stations that
+// Triton already answered for.
 //   1. Candidates: FCC full-power FM and AM licences (data/fcc-stations.json) in the 50 states and DC, with no
 //      catalogue station matched (the fcc-gap matcher). Single-feed network licensees are skipped (SKIPPED_LICENSEES).
 //      Discovered entries from an earlier build (ids "fcc:") are not part of the catalogue used for matching.
-//   2. Wikipedia: the station's article (CALL, then CALL-FM or CALL (AM) when needed). The infobox gives the format,
-//      branding, website, city and frequency. A station is kept only when the page is for the same call sign, the
-//      frequency and city or state agree with the FCC record, and the format is music with a genre.
-//   3. Triton: the first mount that answers status 200 for that exact mount (CALL+BAND+AAC, CALL+BAND, CALL+AAC,
-//      CALL; at most four requests). The codec in the XML decides the extension (aac or mp3).
+//      Ordered by orderCandidates: commercial-band FM (92.0 MHz and up), then AM, then FM below 92.0; stable within each.
+//   2. Triton: the first mount that answers status 200 for that exact mount (CALL+BAND+AAC, CALL+BAND, CALL+AAC,
+//      CALL; at most four requests). The codec in the XML decides the extension (aac or mp3). Paced at 4 req/s at most.
+//      On an error or an HTTP status other than 200 and 404, back off (60 s, 120 s, 240 s) and retry; after three
+//      retries the stage stops, and a re-run resumes from the progress file.
+//   3. Wikipedia, for the Triton hits with a usable codec only: the station's article (CALL, then CALL-FM or CALL (AM)
+//      when needed). The infobox gives the format, branding, website, city and frequency. A station is kept only when
+//      the page is for the same call sign, the frequency and city or state agree with the FCC record, and the format
+//      is music with a genre. Paced at 3 s; 120 s back-off on HTTP 429 or maxlag, three retries, then the stage stops
+//      and the stations already judged are kept.
 //
 // Honest limits: the audio is not fetched. The stream is trusted from Triton's mount record and the official
 // call-sign mount name. Wikipedia formats can be stale. The FCC coordinates are the licensed transmitter.
 //
-// Pure parsers are exported for scripts/discover-streams.test.mjs. The main run is skipped on import.
+// Pure parsers and runDiscovery are exported for scripts/discover-streams.test.mjs. The main run is skipped on import.
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,11 +46,12 @@ const CATALOG = resolve(root, 'public/catalog.json');
 const OUT = resolve(root, 'data/discovered-stations.json');
 
 const WP_API = 'https://en.wikipedia.org/w/api.php';
-const WP_UA = 'RoadtripRadio-coverage/1.0 (station format lookup; one-off, batched, 1 req/2s)';
+export const WP_UA = 'RoadtripRadio-coverage/1.0 (station format lookup; one-off, batched, 1 req/3s)';
 const TRITON_API = 'https://playerservices.streamtheworld.com/api/livestream';
 const TRITON_REDIRECT = 'https://playerservices.streamtheworld.com/api/livestream-redirect';
 const TRITON_UA = 'RoadtripRadio-coverage/1.0 (stream mount lookup; about 4 req/s)';
-const TRITON_GAP_MS = 250;
+/** Triton pacing: at most 4 requests a second. On an error or HTTP status other than 200/404: back off, three retries. */
+export const TRITON_PACING = { gapMs: 250, retryMs: [60000, 120000, 240000], maxRetries: 3 };
 const WP_BATCH = 50;
 /** Wikipedia pacing: at least 3 s between calls; on HTTP 429 or maxlag wait 120 s, at most 3 retries, then stop. */
 export const WP_PACING = { gapMs: 3000, retryMs: 120000, maxRetries: 3 };
@@ -114,6 +122,21 @@ export function candidateStations(fccStations, catalogRecords) {
     candidates.push(s);
   }
   return { candidates, skipped, matched, outOfScope };
+}
+
+/**
+ * The group a candidate is checked in: 0 commercial-band FM (92.0 MHz and up), 1 AM, 2 FM below 92.0 MHz. The
+ * noncommercial band was the first run's whole result (the FCC file is in frequency order), so it goes last.
+ */
+export function candidateGroup(s) {
+  if (s.band === 'FM' && s.freq >= 92.0) return 0;
+  if (s.band === 'AM') return 1;
+  return 2;
+}
+
+/** The candidates in run order: group 0, then 1, then 2 (candidateGroup). Stable within each group. Returns a new array. */
+export function orderCandidates(candidates) {
+  return [0, 1, 2].flatMap((g) => candidates.filter((c) => candidateGroup(c) === g));
 }
 
 /** The Triton mounts to try, in order: CALL+BAND+AAC, CALL+BAND, CALL+AAC, CALL. Every one starts with the call sign. */
@@ -477,9 +500,11 @@ export function serializeDiscovered({ generated, stations }) {
   return `${JSON.stringify(head).slice(0, -1)},\n"stations": [\n${body.join(',\n')}\n]\n}\n`;
 }
 
-// ---------- network and cache (main run only) ----------
+// ---------- network, cache and progress (main run only) ----------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const TRITON_HOST = 'playerservices.streamtheworld.com';
+const WP_HOST = 'en.wikipedia.org';
 
 function cachePath(dir, key) {
   return join(dir, `${createHash('sha1').update(key).digest('hex')}.json`);
@@ -513,76 +538,170 @@ async function getText(url, headers) {
   }
 }
 
-function argOf(args, name) {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
+/** The real network, clock and console, as runDiscovery's deps. */
+export function realDeps() {
+  return {
+    getText,
+    sleep,
+    now: () => Date.now(),
+    log: (m) => console.log(m),
+    warn: (m) => console.warn(m),
+  };
+}
+
+/** A stage that stopped after its retries. The stages before it keep what they judged. */
+export class StageStop extends Error {
+  constructor(stage, message) {
+    super(message);
+    this.name = 'StageStop';
+    this.stage = stage;
+  }
+}
+
+/**
+ * The Triton progress file: one JSON line per station (id, call, status, mount, codec, ext, reason). A missing file is
+ * an empty map. A torn last line is ignored, so that station is checked again.
+ */
+export function readProgress(file) {
+  const map = new Map();
+  if (!existsSync(file)) return map;
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (line.trim() === '') continue;
+    try {
+      const rec = JSON.parse(line);
+      if (rec && typeof rec.id === 'string') map.set(rec.id, rec);
+    } catch {
+      // torn line: ignored
+    }
+  }
+  return map;
 }
 
 const countBy = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
 const summary = (map) => [...map.entries()].map(([k, v]) => `${k} ${v}`).join('; ') || 'none';
 
-async function main() {
-  const args = process.argv.slice(2);
-  const cacheDir = resolve(argOf(args, '--cache') ?? process.env.DISCOVER_CACHE_DIR ?? join(tmpdir(), 'roadtrip-radio-discover'));
-  const limit = argOf(args, '--limit') ? Number(argOf(args, '--limit')) : Infinity;
+/**
+ * The whole run, Triton first. Stage 1: Triton for every candidate, in the order given (use orderCandidates). Each
+ * station's verdict is appended to the progress file, so a re-run skips it. Stage 2: Wikipedia, only for the Triton
+ * hits whose codec is usable. A station is kept only with a Wikipedia music format that agrees with the FCC record.
+ *
+ * candidates: FCC licence rows (call, band, freq, city, state, lat, lng, facilityId, ...), already ordered.
+ * cacheDir: the cache root (wp/, triton/, triton-progress.jsonl). deps: see realDeps (getText, sleep, now, log, warn).
+ * limit: process only the first n candidates.
+ *
+ * Returns { kept, stopped, counts, requests }. kept: the entries for the stations judged (sorted by facility id).
+ * stopped: null, or { stage: 'triton' | 'wikipedia', message }. A Triton stop keeps nothing (the Wikipedia stage does
+ * not run), and the caller should not write the committed file. A Wikipedia stop keeps the judged stations only.
+ */
+export async function runDiscovery({ candidates, cacheDir, deps, verified, limit = Infinity }) {
   const wpDir = join(cacheDir, 'wp');
   const tDir = join(cacheDir, 'triton');
-  const verified = new Date().toISOString().slice(0, 10);
-  const net = { 'en.wikipedia.org': 0, 'playerservices.streamtheworld.com': 0 };
-  const cacheHits = { wikipedia: 0, triton: 0 };
-
-  const fcc = parseDataFile(readFileSync(FCC_DATA, 'utf8'));
-  const catalog = JSON.parse(readFileSync(CATALOG, 'utf8'));
-  const records = catalog.stations.map(expandCatalogRecord);
-  const { candidates, skipped, matched, outOfScope } = candidateStations(fcc.stations, records);
+  const progressFile = join(cacheDir, 'triton-progress.jsonl');
+  mkdirSync(cacheDir, { recursive: true });
   const todo = candidates.slice(0, limit);
-  console.log(`FCC licences ${fcc.stations.length}; out of scope (LPFM, territories) ${outOfScope}; matched in catalogue ${matched}`);
-  console.log(`candidates (FM and AM, 50 states and DC, unmatched) ${candidates.length}; skipped networks: ${summary(new Map(Object.entries(skipped)))}`);
-  console.log(`processing ${todo.length}`);
+  const requests = { [WP_HOST]: 0, [TRITON_HOST]: 0 };
+  const cacheHits = { wikipedia: 0, triton: 0 };
+  const progress = readProgress(progressFile);
+  const resumedBefore = todo.filter((row) => progress.has(`fcc:${row.facilityId}`)).length;
+  const gate = { triton: 0, wikipedia: 0 };
 
-  let lastWp = 0;
-  async function wpGate() {
-    const wait = lastWp + WP_PACING.gapMs - Date.now();
-    if (wait > 0) await sleep(wait);
-    lastWp = Date.now();
+  /** Waits so that calls of one host are at least gapMs apart. */
+  async function paced(host, gapMs) {
+    const wait = gate[host] + gapMs - deps.now();
+    if (wait > 0) await deps.sleep(wait);
+    gate[host] = deps.now();
   }
 
-  /** One batched MediaWiki request. Retries HTTP 429 and maxlag up to three times, 120 s apart, then throws. */
-  async function wpRequest(titles) {
-    const url =
-      `${WP_API}?action=query&prop=revisions&rvprop=content&rvslots=main&rvsection=0&format=json&formatversion=2` +
-      `&redirects=1&maxlag=5&titles=${titles.map(encodeURIComponent).join('|')}`;
+  // ----- stage 1: Triton -----
+
+  /** One mount's answer: a parsed response (cached when it is a mountpoint), or a 404 miss. Retries, then StageStop. */
+  async function tritonAnswer(mount) {
+    const cached = readCache(tDir, mount);
+    if (cached) {
+      cacheHits.triton += 1;
+      return parseLivestreamXml(cached.body);
+    }
+    const url = `${TRITON_API}?mount=${encodeURIComponent(mount)}&transports=http,hls&version=1.10`;
     for (let attempt = 0; ; attempt++) {
-      await wpGate();
-      net['en.wikipedia.org'] += 1;
-      const res = await getText(url, { 'User-Agent': WP_UA, Accept: 'application/json' });
-      let json = null;
+      await paced('triton', TRITON_PACING.gapMs);
+      requests[TRITON_HOST] += 1;
+      let problem;
       try {
-        json = JSON.parse(res.body);
-      } catch {
-        json = null;
-      }
-      const lagged = json?.error?.code === 'maxlag';
-      if (res.status === 429 || lagged) {
-        if (attempt >= WP_PACING.maxRetries) {
-          throw new Error(`Wikipedia still rate limited (HTTP ${res.status}${lagged ? ', maxlag' : ''}) after ${WP_PACING.maxRetries} retries; stopped`);
+        const res = await deps.getText(url, { 'User-Agent': TRITON_UA, Accept: 'application/xml' });
+        if (res.status === 404) return { status: 404, mount: null, codec: null, hasServers: false };
+        if (res.status === 200 && res.body.includes('<mountpoint')) {
+          writeCache(tDir, mount, { mount, body: res.body });
+          return parseLivestreamXml(res.body);
         }
-        console.warn(`Wikipedia HTTP ${res.status}${lagged ? ' maxlag' : ''}; waiting ${WP_PACING.retryMs / 1000} s (retry ${attempt + 1} of ${WP_PACING.maxRetries})`);
-        await sleep(WP_PACING.retryMs);
-        continue;
+        problem = `HTTP ${res.status}${res.status === 200 ? ' with no mountpoint' : ''}`;
+      } catch (err) {
+        problem = err.message;
       }
-      if (res.status !== 200 || json === null || json.error) {
-        throw new Error(`Wikipedia request failed: HTTP ${res.status} ${json?.error?.code ?? ''}; stopped`);
+      if (attempt >= TRITON_PACING.maxRetries) {
+        throw new StageStop('triton', `Triton ${problem} for ${mount} after ${TRITON_PACING.maxRetries} retries; stopped`);
       }
-      return json;
+      const wait = TRITON_PACING.retryMs[attempt];
+      deps.warn(`Triton ${problem} for ${mount}; waiting ${wait / 1000} s (retry ${attempt + 1} of ${TRITON_PACING.maxRetries})`);
+      await deps.sleep(wait);
     }
   }
 
-  /**
-   * Per-title records: from the cache, else from one batched request for the rest. Each record is cached. A stop
-   * returns the records already held (cache and earlier batches) with the stop reason, so those stations are still
-   * judged; the titles not reached are absent from the map.
-   */
+  /** The Triton verdict for one station: 'hit' (with mount, codec, ext or reason) or 'miss'. */
+  async function tritonStation(row) {
+    const id = `fcc:${row.facilityId}`;
+    const answers = [];
+    for (const mount of mountCandidates(row.call, row.band)) {
+      answers.push({ mount, answer: await tritonAnswer(mount) });
+      if (tritonVerdict(answers).status === 'hit') break;
+    }
+    const verdict = tritonVerdict(answers);
+    if (verdict.status === 'incomplete') throw new StageStop('triton', `Triton check incomplete for ${row.call}`);
+    if (verdict.status === 'miss') return { id, call: row.call, status: 'miss' };
+    const { ext, reason } = codecToExt(verdict.parsed.codec, verdict.mount);
+    return { id, call: row.call, status: 'hit', mount: verdict.mount, codec: verdict.parsed.codec, ext, reason };
+  }
+
+  let stopped = null;
+  let checked = 0;
+  try {
+    for (const row of todo) {
+      const id = `fcc:${row.facilityId}`;
+      if (!progress.has(id)) {
+        const rec = await tritonStation(row);
+        appendFileSync(progressFile, `${JSON.stringify(rec)}\n`);
+        progress.set(id, rec);
+        checked += 1;
+        if (checked % 500 === 0) deps.log(`Triton: ${checked} checked this run (${todo.length} in this run)`);
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof StageStop)) throw err;
+    stopped = { stage: err.stage, message: err.message };
+  }
+
+  const tritonKinds = new Map();
+  const hits = [];
+  for (const row of todo) {
+    const rec = progress.get(`fcc:${row.facilityId}`);
+    if (rec === undefined) continue;
+    if (rec.status === 'miss') countBy(tritonKinds, 'no Triton mount');
+    else if (rec.ext === null) countBy(tritonKinds, rec.reason);
+    else hits.push({ row, rec });
+  }
+  const tritonHits = todo.filter((row) => progress.get(`fcc:${row.facilityId}`)?.status === 'hit').length;
+  const counts = {
+    candidates: todo.length,
+    tritonResumed: resumedBefore,
+    tritonHits,
+    tritonUsable: hits.length,
+    tritonNotKept: summary(tritonKinds),
+    wikipedia: { checked: 0, accepted: 0, kinds: 'none', notChecked: 0 },
+  };
+  if (stopped !== null) return { kept: [], stopped, counts, requests, cacheHits };
+
+  // ----- stage 2: Wikipedia, for the Triton hits only -----
+
+  /** Per-title records from the cache, else from one batched request for the rest. A stop returns the records held. */
   async function wikiLookup(titles) {
     const out = new Map();
     const need = [];
@@ -599,6 +718,7 @@ async function main() {
       try {
         json = await wpRequest(batch);
       } catch (err) {
+        if (!(err instanceof StageStop)) throw err;
         return { recs: out, stopped: err.message };
       }
       const q = json.query ?? {};
@@ -618,26 +738,63 @@ async function main() {
         writeCache(wpDir, t, rec);
         out.set(t, rec);
       }
-      console.log(`wikipedia batch ${Math.floor(i / WP_BATCH) + 1}: ${batch.length} titles`);
+      deps.log(`wikipedia batch ${Math.floor(i / WP_BATCH) + 1}: ${batch.length} titles`);
     }
     return { recs: out, stopped: null };
   }
 
-  // Step 2: Wikipedia. Attempt 0 is the base call sign. Attempt 1 (CALL-FM or CALL (AM)) runs only for the
-  // stations whose attempt 0 was a fallback. A reject stops at once. A stop (HTTP error after the retries) ends the
-  // stage: the stations it did not reach stay incomplete and are not kept, but the stations already checked are.
-  const state = todo.map((row) => ({ fcc: row, result: null, lastFallback: null }));
-  let stopped = null;
-  for (let k = 0; k < 2 && stopped === null; k++) {
+  /** One batched MediaWiki request. Retries HTTP 429 and maxlag three times, 120 s apart, then StageStop. */
+  async function wpRequest(titles) {
+    const url =
+      `${WP_API}?action=query&prop=revisions&rvprop=content&rvslots=main&rvsection=0&format=json&formatversion=2` +
+      `&redirects=1&maxlag=5&titles=${titles.map(encodeURIComponent).join('|')}`;
+    for (let attempt = 0; ; attempt++) {
+      await paced('wikipedia', WP_PACING.gapMs);
+      requests[WP_HOST] += 1;
+      let res;
+      try {
+        res = await deps.getText(url, { 'User-Agent': WP_UA, Accept: 'application/json' });
+      } catch (err) {
+        res = { status: 0, body: '', error: err.message };
+      }
+      let json = null;
+      try {
+        json = JSON.parse(res.body);
+      } catch {
+        json = null;
+      }
+      const lagged = json?.error?.code === 'maxlag';
+      if (res.status === 429 || lagged || res.error !== undefined) {
+        const why = res.error !== undefined ? `network error (${res.error})` : `HTTP ${res.status}${lagged ? ' maxlag' : ''}`;
+        if (attempt >= WP_PACING.maxRetries) {
+          throw new StageStop('wikipedia', `Wikipedia still ${why} after ${WP_PACING.maxRetries} retries; stopped`);
+        }
+        deps.warn(`Wikipedia ${why}; waiting ${WP_PACING.retryMs / 1000} s (retry ${attempt + 1} of ${WP_PACING.maxRetries})`);
+        await deps.sleep(WP_PACING.retryMs);
+        continue;
+      }
+      if (res.status !== 200 || json === null || json.error) {
+        throw new StageStop('wikipedia', `Wikipedia request failed: HTTP ${res.status} ${json?.error?.code ?? ''}; stopped`);
+      }
+      return json;
+    }
+  }
+
+  // Attempt 0 is the base call sign. Attempt 1 (CALL-FM or CALL (AM)) runs only for the stations whose attempt 0 was a
+  // fallback. A reject stops at once. A stop ends the stage: the stations it did not reach stay incomplete and are not
+  // kept, and the stations already judged are.
+  const state = hits.map(({ row, rec }) => ({ row, rec, result: null, lastFallback: null }));
+  let wpStopped = null;
+  for (let k = 0; k < 2 && wpStopped === null; k++) {
     const pending = state.filter((st) => st.result === null);
     if (pending.length === 0) break;
-    const titleOf = (st) => wikiTitleCandidates(st.fcc.call, st.fcc.band)[k];
+    const titleOf = (st) => wikiTitleCandidates(st.row.call, st.row.band)[k];
     const looked = await wikiLookup(pending.map(titleOf));
-    stopped = looked.stopped;
+    wpStopped = looked.stopped;
     for (const st of pending) {
-      const rec = looked.recs.get(titleOf(st));
-      if (rec === undefined) continue;
-      const ev = evaluateWikiPage(rec, st.fcc);
+      const page = looked.recs.get(titleOf(st));
+      if (page === undefined) continue;
+      const ev = evaluateWikiPage(page, st.row);
       if (ev.outcome === 'fallback') st.lastFallback = ev;
       else st.result = ev;
     }
@@ -646,7 +803,7 @@ async function main() {
   let wpIncomplete = 0;
   for (const st of state) {
     if (st.result === null) {
-      if (st.lastFallback === null || stopped !== null) {
+      if (st.lastFallback === null || wpStopped !== null) {
         wpIncomplete += 1;
         continue;
       }
@@ -655,78 +812,64 @@ async function main() {
     if (st.result.outcome !== 'accept') countBy(wpKinds, st.result.kind);
   }
   const accepted = state.filter((st) => st.result !== null && st.result.outcome === 'accept');
-  const checked = state.filter((st) => st.result !== null).length;
-  console.log(`Wikipedia: checked ${checked} of ${todo.length}; accepted ${accepted.length}; not kept: ${summary(wpKinds)}`);
-  if (wpIncomplete > 0) console.log(`Wikipedia: ${wpIncomplete} not checked (stopped); not kept`);
-
-  // Step 3: Triton. Mounts in order; stop at the first one that answers status 200 for that exact mount.
-  let lastT = 0;
-  async function tritonLookup(mount) {
-    const cached = readCache(tDir, mount);
-    if (cached) {
-      cacheHits.triton += 1;
-      return parseLivestreamXml(cached.body);
-    }
-    const wait = lastT + TRITON_GAP_MS - Date.now();
-    if (wait > 0) await sleep(wait);
-    lastT = Date.now();
-    net['playerservices.streamtheworld.com'] += 1;
-    const url = `${TRITON_API}?mount=${encodeURIComponent(mount)}&transports=http,hls&version=1.10`;
-    let res;
-    try {
-      res = await getText(url, { 'User-Agent': TRITON_UA, Accept: 'application/xml' });
-    } catch (err) {
-      return { error: err.message };
-    }
-    if (res.status !== 200 || !res.body.includes('<mountpoint')) return { error: `HTTP ${res.status}` };
-    writeCache(tDir, mount, { mount, body: res.body });
-    return parseLivestreamXml(res.body);
-  }
-
-  const kept = [];
-  const tritonKinds = new Map();
-  for (const st of accepted) {
-    const row = st.fcc;
-    const answers = [];
-    for (const mount of mountCandidates(row.call, row.band)) {
-      answers.push({ mount, answer: await tritonLookup(mount) });
-      if (tritonVerdict(answers).status === 'hit') break;
-    }
-    const verdict = tritonVerdict(answers);
-    if (verdict.status === 'incomplete') {
-      countBy(tritonKinds, 'Triton not answered (not kept)');
-      continue;
-    }
-    if (verdict.status === 'miss') {
-      countBy(tritonKinds, 'no Triton mount');
-      continue;
-    }
-    const hit = verdict.parsed;
-    const mountUsed = verdict.mount;
-    const { ext, reason } = codecToExt(hit.codec, mountUsed);
-    if (ext === null) {
-      countBy(tritonKinds, reason);
-      continue;
-    }
-    kept.push(buildEntry({ fcc: row, wiki: st.result, mount: mountUsed, codec: hit.codec, ext, verified }));
-  }
-  console.log(`Triton: kept ${kept.length} of ${accepted.length}; not kept: ${summary(tritonKinds)}`);
-
+  counts.wikipedia = {
+    checked: state.filter((st) => st.result !== null).length,
+    accepted: accepted.length,
+    kinds: summary(wpKinds),
+    notChecked: wpIncomplete,
+  };
+  const kept = accepted.map((st) =>
+    buildEntry({ fcc: st.row, wiki: st.result, mount: st.rec.mount, codec: st.rec.codec, ext: st.rec.ext, verified }),
+  );
   kept.sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)));
+  const stop = wpStopped === null ? null : { stage: 'wikipedia', message: wpStopped };
+  return { kept, stopped: stop, counts, requests, cacheHits };
+}
+
+function argOf(args, name) {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+// The main run starts only when this file is the entry point (not when a test imports it).
+async function main() {
+  const args = process.argv.slice(2);
+  const cacheDir = resolve(argOf(args, '--cache') ?? process.env.DISCOVER_CACHE_DIR ?? join(tmpdir(), 'roadtrip-radio-discover'));
+  const limit = argOf(args, '--limit') ? Number(argOf(args, '--limit')) : Infinity;
+  const verified = new Date().toISOString().slice(0, 10);
+
+  const fcc = parseDataFile(readFileSync(FCC_DATA, 'utf8'));
+  const catalog = JSON.parse(readFileSync(CATALOG, 'utf8'));
+  const records = catalog.stations.map(expandCatalogRecord);
+  const { candidates, skipped, matched, outOfScope } = candidateStations(fcc.stations, records);
+  const ordered = orderCandidates(candidates);
+  const groupCount = [0, 1, 2].map((g) => candidates.filter((c) => candidateGroup(c) === g).length);
+  console.log(`FCC licences ${fcc.stations.length}; out of scope (LPFM, territories) ${outOfScope}; matched in catalogue ${matched}`);
+  console.log(`candidates (FM and AM, 50 states and DC, unmatched) ${candidates.length}; skipped networks: ${summary(new Map(Object.entries(skipped)))}`);
+  console.log(`order: commercial FM 92.0 MHz and up ${groupCount[0]}; AM ${groupCount[1]}; FM below 92.0 ${groupCount[2]}`);
+  console.log(`processing ${Math.min(ordered.length, limit)} (Triton first; Wikipedia only for the Triton hits); cache ${cacheDir}`);
+
+  const result = await runDiscovery({ candidates: ordered, cacheDir, deps: realDeps(), verified, limit });
+  const { counts, requests, cacheHits, kept, stopped } = result;
+  console.log(`Triton: ${counts.candidates} candidates; ${counts.tritonResumed} from the progress file; hits ${counts.tritonHits}; usable codec ${counts.tritonUsable}; not kept: ${counts.tritonNotKept}`);
+  console.log(`Wikipedia (Triton hits only): checked ${counts.wikipedia.checked}; accepted ${counts.wikipedia.accepted}; not kept: ${counts.wikipedia.kinds}`);
+  if (counts.wikipedia.notChecked > 0) console.log(`Wikipedia: ${counts.wikipedia.notChecked} Triton hits not checked (stopped); not kept`);
+  console.log(`requests: ${Object.entries(requests).map(([h, n]) => `${h} ${n}`).join('; ')}; cache hits: wikipedia ${cacheHits.wikipedia}, triton ${cacheHits.triton}`);
+
   if (Number.isFinite(limit)) {
     console.log(`--limit run: ${OUT} not written (${kept.length} kept in this sample)`);
+  } else if (stopped?.stage === 'triton') {
+    console.log(`${OUT} not written: the Triton stage stopped`);
   } else {
     writeFileSync(OUT, serializeDiscovered({ generated: verified, stations: kept }));
     console.log(`wrote ${OUT}: ${kept.length} stations`);
   }
-  console.log(`requests: ${Object.entries(net).map(([h, n]) => `${h} ${n}`).join('; ')}; cache hits: wikipedia ${cacheHits.wikipedia}, triton ${cacheHits.triton}`);
   if (stopped !== null) {
-    console.error(`STOPPED: ${stopped}. Written: the completed stations only. Re-run to resume from the cache.`);
-    process.exitCode = 2;
+    console.error(`STOPPED (${stopped.stage}): ${stopped.message}. Re-run to resume from the cache.`);
+    process.exitCode = stopped.stage === 'triton' ? 3 : 2;
   }
 }
 
-// The main run starts only when this file is the entry point (not when a test imports it).
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch((err) => {
     console.error(err.message);

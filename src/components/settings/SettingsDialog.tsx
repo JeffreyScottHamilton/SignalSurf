@@ -149,7 +149,11 @@ export function SettingsDialog() {
                   <a href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">
                     Wikipedia
                   </a>
-                  {' (CC BY-SA 4.0) · Some locations: '}
+                  {' ('}
+                  <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">
+                    CC BY-SA 4.0
+                  </a>
+                  {') · Some locations: '}
                   <a href="https://www.fcc.gov/" target="_blank" rel="noopener noreferrer">
                     FCC
                   </a>

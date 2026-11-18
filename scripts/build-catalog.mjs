@@ -33,6 +33,7 @@
 //   x hls (present only when true)   a lat, o lng (inside a US box, 4 decimals; absent when none)
 //   y uncategorized (present only when true): no tags at all, genres [] ; shows "Genre not listed"
 //   k clickCount (directory popularity)
+//   w wikiTitle (discovered stations only: the Wikipedia article title, for the "Format info: Wikipedia" link)
 // A key whose value is null, false or an empty list is left out; the app reads a missing key as that empty value.
 // codec and bitrate are not written: no screen or player reads them, and the sanitiser fills them with null.
 

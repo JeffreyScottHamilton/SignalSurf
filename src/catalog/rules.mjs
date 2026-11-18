@@ -607,6 +607,7 @@ export const CATALOG_KEYS = {
   lng: 'o',
   uncategorized: 'y',
   clickCount: 'k',
+  wikiTitle: 'w',
 };
 
 /** Maps a catalogue record's short keys back to the Station field names. Other keys pass through. */

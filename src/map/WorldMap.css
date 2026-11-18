@@ -27,7 +27,8 @@
 .ss-map__canvas.leaflet-container:focus-visible,
 .ss-map .ss-marker-icon:focus-visible,
 .ss-map__zoom-btn:focus-visible,
-.ss-map .ss-map-card button:focus-visible {
+.ss-map .ss-map-card button:focus-visible,
+.ss-map .ss-map-card a:focus-visible {
   outline: 2px solid var(--ss-accent-text);
   outline-offset: 2px;
 }
@@ -228,6 +229,21 @@
 
 .ss-map .ss-map-card__play:hover {
   background: var(--ss-accent-hover);
+}
+
+/* Wikipedia article link (CC BY-SA attribution for the station format). Small, under the Play button. */
+.ss-map .ss-map-card__format {
+  display: block;
+  margin-top: var(--ss-2);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ss-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ss-map .ss-map-card__format:hover {
+  color: var(--ss-text);
 }
 
 /* Touch targets: 44px on mobile per contract. */
