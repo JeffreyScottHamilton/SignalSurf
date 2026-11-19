@@ -7,12 +7,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  buildEntry,
   candidateGroup,
   candidateStations,
   codecToExt,
   evaluateWikiPage,
   firstNumber,
   formatTags,
+  getText,
   hardExcludeTag,
   isDisambiguation,
   locationMatches,
@@ -411,6 +413,31 @@ describe('the run, Triton first (fake network and clock)', () => {
     expect(r.counts.wikipedia.accepted).toBe(1);
   });
 
+  it('pads short facility ids to 8 characters so the app accepts them', () => {
+    const e = buildEntry({
+      fcc: { ...KUBL_ROW, facilityId: '89' },
+      wiki: { title: 'X', ...{} },
+      mount: KUBL_HIT,
+      codec: 'heaacv2',
+      ext: 'aac',
+      verified: '2026-11-19',
+    });
+    expect(e.id).toBe('fcc:0089');
+    expect(e.id.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('keeps one entry when two candidates resolve to the same stream (the first in run order)', async () => {
+    const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
+    const r = await runDiscovery({
+      candidates: orderCandidates([KUBL_ROW, KUBL_ROW]),
+      cacheDir: dir,
+      deps: w.deps,
+      verified: '2026-11-18',
+    });
+    expect(r.kept.map((e) => e.id)).toEqual(['fcc:11238']);
+    expect(r.counts.duplicateStream).toBe(1);
+  });
+
   it('asks Triton the four mounts for a station with no hit, and makes no Wikipedia call for it', async () => {
     const w = world({ hits: hitsFor(), wikiPages: { 'KUBL-FM': KUBL_CONTENT } });
     await runDiscovery({ candidates: ORDERED, cacheDir: dir, deps: w.deps, verified: '2026-11-18' });
@@ -504,5 +531,47 @@ describe('the run, Triton first (fake network and clock)', () => {
     writeFileSync(file, '{"id":"fcc:1","status":"miss"}\n{"id":"fcc:2","stat');
     expect([...readProgress(file).keys()]).toEqual(['fcc:1']);
     expect(readProgress(join(dir, 'missing.jsonl')).size).toBe(0);
+  });
+});
+
+describe('request deadline (stalled fetch never hangs the run)', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it('retries a stalled request once, then throws the timeout for the caller to record', async () => {
+    let calls = 0;
+    globalThis.fetch = () => {
+      calls += 1;
+      return new Promise(() => {}); // never resolves and ignores the abort signal
+    };
+    await expect(getText('https://example.test/x', { 'User-Agent': 'test' }, 20)).rejects.toMatchObject({
+      timedOut: true,
+    });
+    expect(calls).toBe(2);
+  });
+
+  it('returns the body when the retry after a stall answers', async () => {
+    let calls = 0;
+    globalThis.fetch = (url, opts) => {
+      calls += 1;
+      if (calls === 1) return new Promise(() => {});
+      return Promise.resolve(new Response('ok', { status: 200 }));
+    };
+    const res = await getText('https://example.test/x', { 'User-Agent': 'test' }, 20);
+    expect(res).toEqual({ status: 200, body: 'ok' });
+    expect(calls).toBe(2);
+  });
+
+  it('a body that stalls is also cut off by the deadline', async () => {
+    globalThis.fetch = () =>
+      Promise.resolve({
+        status: 200,
+        text: () => new Promise(() => {}),
+      });
+    await expect(getText('https://example.test/x', { 'User-Agent': 'test' }, 20)).rejects.toMatchObject({
+      timedOut: true,
+    });
   });
 });

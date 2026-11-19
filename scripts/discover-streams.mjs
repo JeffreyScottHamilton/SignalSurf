@@ -465,7 +465,8 @@ export function tritonVerdict(answers) {
 /** One discovered entry (the shape data/discovered-stations.json holds) from a licence, its Wikipedia check and its Triton mount. */
 export function buildEntry({ fcc, wiki, mount, codec, ext, verified }) {
   return {
-    id: `fcc:${fcc.facilityId}`,
+    // Padded to 8 characters: the app rejects station ids shorter than that (sanitizeStation).
+    id: `fcc:${String(fcc.facilityId).padStart(4, '0')}`,
     call: fcc.call.toUpperCase(),
     band: fcc.band,
     freq: fcc.freq,
@@ -520,21 +521,51 @@ function writeCache(dir, key, value) {
   writeFileSync(cachePath(dir, key), JSON.stringify(value));
 }
 
-/** GET through fetch (honours --use-env-proxy); falls back to curl when fetch cannot connect. */
-async function getText(url, headers) {
-  try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
+/** Hard deadline for one request, covering the response headers and the body. */
+export const REQUEST_TIMEOUT_MS = 30000;
+
+/**
+ * One fetch with a hard deadline. The deadline rejects even when fetch ignores its abort signal, so a request
+ * can never hang the run. A timeout is marked with timedOut = true.
+ */
+function fetchWithDeadline(url, headers, timeoutMs) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      const err = new Error(`no response within ${timeoutMs / 1000} s`);
+      err.timedOut = true;
+      reject(err);
+    }, timeoutMs);
+  });
+  const request = (async () => {
+    const res = await fetch(url, { headers, signal: controller.signal });
     return { status: res.status, body: await res.text() };
-  } catch (err) {
-    try {
-      const out = execFileSync('curl', ['-sS', '--max-time', '60', '-A', headers['User-Agent'], '-w', '\n%{http_code}', url], {
-        maxBuffer: 64 * 1024 * 1024,
-      }).toString('utf8');
-      const cut = out.lastIndexOf('\n');
-      return { status: Number(out.slice(cut + 1)), body: out.slice(0, cut) };
-    } catch {
-      throw err;
-    }
+  })();
+  return Promise.race([request, deadline]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * GET through fetch (honours --use-env-proxy). A timeout is retried once, and a second timeout is thrown for the
+ * caller to record. Other fetch failures fall back to curl, which has its own 60 s limit.
+ */
+export async function getText(url, headers, timeoutMs = REQUEST_TIMEOUT_MS) {
+  let err;
+  try {
+    return await fetchWithDeadline(url, headers, timeoutMs);
+  } catch (e) {
+    err = e;
+  }
+  if (err.timedOut) return fetchWithDeadline(url, headers, timeoutMs);
+  try {
+    const out = execFileSync('curl', ['-sS', '--max-time', '60', '-A', headers['User-Agent'], '-w', '\n%{http_code}', url], {
+      maxBuffer: 64 * 1024 * 1024,
+    }).toString('utf8');
+    const cut = out.lastIndexOf('\n');
+    return { status: Number(out.slice(cut + 1)), body: out.slice(0, cut) };
+  } catch {
+    throw err;
   }
 }
 
@@ -818,9 +849,18 @@ export async function runDiscovery({ candidates, cacheDir, deps, verified, limit
     kinds: summary(wpKinds),
     notChecked: wpIncomplete,
   };
-  const kept = accepted.map((st) =>
-    buildEntry({ fcc: st.row, wiki: st.result, mount: st.rec.mount, codec: st.rec.codec, ext: st.rec.ext, verified }),
-  );
+  // One stream is one station: when two licences resolve to the same mount, the first in run order is kept.
+  const seenStream = new Set();
+  const kept = [];
+  for (const st of accepted) {
+    const entry = buildEntry({ fcc: st.row, wiki: st.result, mount: st.rec.mount, codec: st.rec.codec, ext: st.rec.ext, verified });
+    if (seenStream.has(entry.streamUrl)) {
+      counts.duplicateStream = (counts.duplicateStream ?? 0) + 1;
+      continue;
+    }
+    seenStream.add(entry.streamUrl);
+    kept.push(entry);
+  }
   kept.sort((a, b) => Number(a.id.slice(4)) - Number(b.id.slice(4)));
   const stop = wpStopped === null ? null : { stage: 'wikipedia', message: wpStopped };
   return { kept, stopped: stop, counts, requests, cacheHits };

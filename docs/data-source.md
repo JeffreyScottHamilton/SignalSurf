@@ -189,7 +189,7 @@ Licensed US music stations that Radio Browser does not list, and that have an of
    - has a radio station infobox whose frequency matches the licence (FM within 0.05 MHz, AM within 0.5 kHz) when it gives one;
    - has a city or state that agrees with the licence (a state named in the text must be the licence's state; a bare city must be the licence's city);
    - has a format with no excluded tag (news, talk, sports and the other hard-exclude tags in `src/catalog/rules.mjs`; any one of them drops the station, even beside a genre tag, as `docs/decisions.md` says) and whose tags name a music genre under the catalogue's rules. A genre guessed from the station name does not count: a "College radio" station called "The Edge" is not kept.
-6. **Entry.** `id` is `fcc:<facility id>`; `name` is the call sign, the frequency and the branding (`KUBL 93.3 The Bull`); `homepage` is the Wikipedia website when it is one plain https link (a bracketed link or a `{{URL}}` template is read; anything else is left empty); `lat`/`lng` are the FCC transmitter; `tags` are the format tags; `wikiTitle`, `tritonMount`, `codec`, `source` and `verified` (the run date) say where each fact came from.
+6. **Entry.** `id` is `fcc:<facility id>`, padded with zeros to four digits (the app rejects station ids under 8 characters); `name` is the call sign, the frequency and the branding (`KUBL 93.3 The Bull`); `homepage` is the Wikipedia website when it is one plain https link (a bracketed link or a `{{URL}}` template is read; anything else is left empty); `lat`/`lng` are the FCC transmitter; `tags` are the format tags; `wikiTitle`, `tritonMount`, `codec`, `source` and `verified` (the run date) say where each fact came from.
 
 The cache (`--cache`, default a temp directory) holds one file per Wikipedia title (`wp/`) and per Triton mount (`triton/`), and `triton-progress.jsonl` with one Triton verdict per station. A re-run, or a re-run after a stop, repeats no request that was already answered and rechecks no station already in `triton-progress.jsonl`. A `--limit <n>` run does not write the committed file.
 
@@ -215,26 +215,32 @@ The build also fills the FCC transmitter point for directory stations that have 
 - Triton's terms for third-party players are not verified (see `docs/licenses.md`).
 - Wikipedia text is CC BY-SA 4.0. The entries carry the article title, and the map attribution and the About panel name Wikipedia (see `docs/licenses.md`).
 
-### Run status (2026-11-18)
+### Run status (2026-11-19)
 
-Wikipedia answered the first batches with 200, then returned HTTP 429 from this network address at about 3 s pacing. Each run retried 429 three times, 120 s apart, and then stopped. The file ships only the stations whose Wikipedia and Triton checks both completed, so the list is partial.
+The run checked Triton first for all 12,423 candidates, then asked Wikipedia only about the 1,103 Triton hits. Wikipedia answered HTTP 429 from this network address during the first runs, so the stage stopped and was resumed from the cache; the final pass completed without a stop. Nothing is pending.
 
 | Measure | Value |
 |---|---|
 | FCC licences | 17,621 |
-| Candidates (FM and AM, 50 states and DC, not matched in the catalogue) | 12,424 |
-| Wikipedia checked before the stop | 829 of 12,424 (about 6.7%); 11,595 not checked |
-| Wikipedia accepted (music format with a genre, page for this call sign, location and frequency agree) | 411 |
-| Triton hits (exact mount answered 200) | 6 of 411 |
-| Added to the catalogue after dedupe | 6 (none skipped as a duplicate) |
+| Candidates (FM and AM, 50 states and DC, not matched in the catalogue) | 12,423: commercial FM 92.0 MHz and up 5,782; AM 3,612; FM below 92.0 MHz 3,029 |
+| Triton hits (an exact mount answered 200 with a usable codec) | 1,103 of 12,423 |
+| Triton misses (no mount answered) | 11,320 |
+| Wikipedia checked (Triton hits only) | 1,103 of 1,103 |
+| Wikipedia not kept | 413: format 350, location 11, no usable page 52 (missing page 35, other title 13, no infobox 2, disambiguation 1, frequency 1) |
+| Wikipedia accepted | 690 |
+| Duplicate stream dropped | 1 (KUZZ 550 AM, fcc:7695, shares the mount KUZZAAC with KUZZ 107.9 FM, fcc:7697; the first in run order, the FM, is kept) |
+| Written to `data/discovered-stations.json` | 689 |
+| Added to the catalogue after dedupe | 678 (11 skipped because their stream is already listed) |
 
-The shipped stations are WBCX 89.1 (Gainesville GA), KXPR 88.9 (Sacramento CA), KNBA 90.3 (Anchorage AK), KCNV 89.7 (Las Vegas NV), WEOS 89.5 (Geneva NY) and KRUA 88.1 (Anchorage AK). Utah has no discovered station yet.
+The catalogue build adds 673 stations in all, including one curated station. The 689 discovered stations are in 45 states; the top states are CA 43, IL 39, TX 36, FL 35, MN 35, WI 31, NC 31, IN 28, PA 27 and MI 26. Utah has three: KBER 101.1 (Ogden), KUBL 93.3 (Salt Lake City) and KBEE 98.7 (Salt Lake City).
 
-Two fixes came out of these runs. A stop used to end the Wikipedia stage before any station was judged, so the first run wrote an empty file; the completed stations are now judged and written. A station with an excluded tag beside a genre tag was kept by the classifier; the Wikipedia step now drops it (KCND 90.5, Bismarck ND, was the case, and is not in the file).
+Request totals. Wikipedia: 14 + 4 + 24 + 3 = 45 HTTP requests over the runs, most of them answered 429; the final pass made 3 and read 1,220 answers from the cache. Triton (`playerservices.streamtheworld.com`): 507 requests in the last session; the verdicts of the earlier sessions were made before the logs were kept with request counts, so their total is not recorded. The Triton pass saved its verdicts to `triton-progress.jsonl`, so no station was checked twice.
 
-To finish the list: run `npm run discover -- --cache <dir>` again after the Wikipedia rate limit has cleared. The cache keeps the answers already received, so only the rest is requested. Then run `npm run catalog`.
+A Triton request that stalled for two hours (no response, no timeout) stopped the first resumed run. Requests now have a 30 s deadline, one retry on timeout, and the run resumes from the cache.
 
-Build (`npm run catalog`, exit 0): `public/catalog.json` is 1,260,558 bytes raw (1.2 MB, under the 2.5 MB limit) and 422,660 bytes gzipped (Node zlib; 433,970 with the gzip command). Before this change it was 4,420 stations, 1,873 with coordinates, 1,258,826 bytes raw and 435,302 gzipped. After it is 4,429 stations and 1,878 with coordinates. The change is +6 discovered, +1 curated, and +2 from the directory, which was fetched live for this build (7,019 raw records), so the directory part is not from this discovery. `docs/coverage.md` (offline): matched by call sign 1,374 to 1,382, probable 339 to 338, missing 15,908 to 15,901, of 17,621 licences.
+To rebuild the list, run `npm run discover -- --cache <dir>`. The cache keeps the answers already received, so only the rest is requested. Then run `npm run catalog`.
+
+Build (`npm run catalog`, exit 0): `public/catalog.json` is 1,430,072 bytes raw (1.4 MB, under the 2.5 MB limit) and 456,793 bytes gzipped (Node zlib). Before this change it was 4,429 stations, 1,878 with coordinates, 1,258,826 bytes raw and 435,302 gzipped. After it is 5,102 stations and 2,551 with coordinates (1,244 from FCC transmitter points: 678 discovered and 566 directory stations filled by `scripts/fcc-coords.mjs`). The directory part was fetched live for this build (7,021 raw records). `docs/coverage.md` (offline): matched by call sign 1,382 to 2,089, probable 338 to 346, missing 15,901 to 15,186, of 17,621 licences.
 
 Until a discovered file exists, `npm run catalog` treats it as an empty list and prints `discovered: 0 (file not present)`. The build does not fail.
 
